@@ -13,3 +13,6 @@ __pycache__/
 
 # 데이터 캐시는 배포에 필요하므로 커밋함:
 #   data/fundamentals.parquet, data/universe.parquet
+
+# OpenDartReader 내부 캐시 (재생성됨)
+docs_cache/
