@@ -1,10 +1,9 @@
-pandas>=2.3
+# Streamlit Cloud(웹앱)용 — DART 수집 의존성 불필요.
+# 앱은 캐시(parquet) + 실시간 시총(FDR)만 읽는다.
+streamlit>=1.58
+pandas>=2.3,<3
 pyarrow>=20
+finance-datareader>=0.9.20
 requests
 lxml
 beautifulsoup4
-finance-datareader>=0.9.20
-OpenDartReader>=0.3.2
-streamlit>=1.58
-plotly>=6
-tqdm
