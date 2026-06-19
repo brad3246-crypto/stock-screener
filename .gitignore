@@ -1,0 +1,15 @@
+# secrets — 절대 커밋 금지
+.streamlit/secrets.toml
+
+# 로그·임시
+data/*.log
+data/*.txt
+data/screener_*.csv
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+
+# 데이터 캐시는 배포에 필요하므로 커밋함:
+#   data/fundamentals.parquet, data/universe.parquet

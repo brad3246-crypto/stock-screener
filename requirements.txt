@@ -1,0 +1,10 @@
+pandas>=2.3
+pyarrow>=20
+requests
+lxml
+beautifulsoup4
+finance-datareader>=0.9.20
+OpenDartReader>=0.3.2
+streamlit>=1.58
+plotly>=6
+tqdm
