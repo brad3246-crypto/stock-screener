@@ -18,7 +18,7 @@ import yfinance as yf
 from screener import config, metrics
 from screener.universe import load_universe
 
-st.set_page_config(page_title="수급 소외 실적주 스크리너 by 웅", layout="wide")
+st.set_page_config(page_title="ADR 바닥 수급 소외 종목 필터", layout="wide")
 
 MARKET_KR = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
 GMARKET_KR = {"US": "미국", "JP": "일본"}
@@ -33,7 +33,7 @@ def _check_password() -> None:
         expected = ""
     if not expected or st.session_state.get("auth_ok"):
         return
-    st.title("📉 수급 소외 실적주 스크리너 by 웅")
+    st.title("ADR 바닥 수급 소외 종목 필터")
     pw = st.text_input("🔒 비밀번호를 입력하세요", type="password")
     if pw == expected:
         st.session_state["auth_ok"] = True
@@ -263,7 +263,7 @@ def render_global() -> None:
     )
 
 
-st.title("📉 수급 소외 실적주 스크리너 by 웅")
+st.title("ADR 바닥 수급 소외 종목 필터")
 _market_group = st.sidebar.radio(
     "🌐 시장 구분", ["🇰🇷 한국 (KOSPI·KOSDAQ)", "🇺🇸 미국 · 🇯🇵 일본"], index=0
 )
@@ -287,31 +287,34 @@ if fund.empty:
 
 universe = _load_universe()
 
-# ── 사이드바: 필터 ───────────────────────────────────────────────────────
+# ── 사이드바: 필터 (적용 버튼을 눌러야 반영) ─────────────────────────────
 with st.sidebar:
-    st.header("조절 필터")
-    min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5)
-    max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5)
-    max_per = st.slider("PER 상한", 2.0, 50.0, config.DEFAULT_MAX_PER, 0.5)
-    max_pbr = st.slider("PBR 상한", 0.2, 10.0, config.DEFAULT_MAX_PBR, 0.1)
-    min_gm = st.slider("매출총이익률 하한 (%)", 0.0, 80.0, 0.0, 1.0)
-    min_om = st.slider("영업이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0)
-    min_nm = st.slider("순이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0)
-    st.divider()
-    st.subheader("적용할 기준")
-    c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True)
-    c2 = st.checkbox(f"② {config.QUARTER_YEAR} 1분기 영업이익 YoY 증가", value=True)
-    c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True)
-    c4 = st.checkbox("④ POR ≤ 상한", value=True)
-    c5 = st.checkbox("⑤ PER ≤ 상한", value=True)
-    c6 = st.checkbox("⑥ PBR ≤ 상한", value=True)
-    c7 = st.checkbox("⑦ 매출총이익률 ≥ 하한", value=False)
-    c8 = st.checkbox("⑧ 영업이익률 ≥ 하한", value=False)
-    c9 = st.checkbox("⑨ 순이익률 ≥ 하한", value=False)
-    st.divider()
-    markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
-    min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
-    show_all = st.checkbox("기준 일부만 충족도 표시(통과 개수순)", value=False)
+    with st.form("kr_filter_form", border=False):
+        st.header("조절 필터")
+        st.caption("값을 조정한 뒤 맨 아래 **적용**을 눌러야 반영됩니다.")
+        min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5)
+        max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5)
+        max_per = st.slider("PER 상한", 2.0, 50.0, config.DEFAULT_MAX_PER, 0.5)
+        max_pbr = st.slider("PBR 상한", 0.2, 10.0, config.DEFAULT_MAX_PBR, 0.1)
+        min_gm = st.slider("매출총이익률 하한 (%)", 0.0, 80.0, 0.0, 1.0)
+        min_om = st.slider("영업이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0)
+        min_nm = st.slider("순이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0)
+        st.divider()
+        st.subheader("적용할 기준")
+        c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True)
+        c2 = st.checkbox(f"② {config.QUARTER_YEAR} 1분기 영업이익 YoY 증가", value=True)
+        c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True)
+        c4 = st.checkbox("④ POR ≤ 상한", value=True)
+        c5 = st.checkbox("⑤ PER ≤ 상한", value=True)
+        c6 = st.checkbox("⑥ PBR ≤ 상한", value=True)
+        c7 = st.checkbox("⑦ 매출총이익률 ≥ 하한", value=False)
+        c8 = st.checkbox("⑧ 영업이익률 ≥ 하한", value=False)
+        c9 = st.checkbox("⑨ 순이익률 ≥ 하한", value=False)
+        st.divider()
+        markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
+        min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
+        show_all = st.checkbox("기준 일부만 충족도 표시(통과 개수순)", value=False)
+        st.form_submit_button("적용", type="primary", use_container_width=True, key="kr_apply")
 
 df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por,
                      max_per=max_per, max_pbr=max_pbr,
@@ -410,7 +413,11 @@ colcfg["PER"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
 colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
-colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
+# 가로 스크롤해도 보이도록 왼쪽 식별 열(시장·종목코드·1년 주가·종목명) 고정
+colcfg["시장"] = st.column_config.TextColumn(pinned=True)
+colcfg["종목코드"] = st.column_config.TextColumn(pinned=True)
+colcfg["종목명"] = st.column_config.TextColumn(pinned=True)
+colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small", pinned=True)
 st.dataframe(
     disp,
     column_config=colcfg,
