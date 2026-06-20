@@ -25,6 +25,27 @@ GMARKET_KR = {"US": "미국", "JP": "일본"}
 CHART_MAX_ROWS = 60   # 미니차트는 상위 N행만(주가 조회 부담 방지)
 
 
+def _check_password() -> None:
+    """공유 비밀번호 잠금. 시크릿 APP_PASSWORD 미설정 시 공개로 동작."""
+    try:
+        expected = str(st.secrets.get("APP_PASSWORD", "")).strip()
+    except Exception:
+        expected = ""
+    if not expected or st.session_state.get("auth_ok"):
+        return
+    st.title("📉 수급 소외 실적주 스크리너 by 웅")
+    pw = st.text_input("🔒 비밀번호를 입력하세요", type="password")
+    if pw == expected:
+        st.session_state["auth_ok"] = True
+        st.rerun()
+    elif pw:
+        st.error("비밀번호가 틀렸습니다.")
+    st.stop()
+
+
+_check_password()
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _price_history(code: str) -> list:
     """최근 1년 종가를 주 단위(약 50포인트)로. 실패 시 빈 리스트."""
