@@ -22,8 +22,10 @@ def compute(
     universe: pd.DataFrame,
     min_roe: float = config.DEFAULT_MIN_ROE,
     max_por: float = config.DEFAULT_MAX_POR,
+    max_per: float = 1e9,
+    max_pbr: float = 1e9,
 ) -> pd.DataFrame:
-    """파생 지표 + 4개 기준 플래그가 붙은 DataFrame 반환."""
+    """파생 지표 + 기준 플래그가 붙은 DataFrame 반환."""
     df = universe.merge(fund, on="code", how="inner")
 
     # ── ROE 3개년 (당기순이익 / 자본총계, 기말 기준) ──────────────────────
@@ -71,10 +73,13 @@ def compute(
     # ── 기준 4: POR <= max_por (연간 또는 1Qx4 중 하나라도) ───────────────
     df["c4_por"] = df["por"].notna() & (df["por"] <= max_por)
 
-    df["pass_all"] = df["c1_uptrend"] & df["c2_q1_yoy"] & df["c3_roe"] & df["c4_por"]
-    df["pass_count"] = (
-        df[["c1_uptrend", "c2_q1_yoy", "c3_roe", "c4_por"]].sum(axis=1)
-    )
+    # ── 기준 5·6: PER·PBR <= 상한 ────────────────────────────────────────
+    df["c5_per"] = df["per"].notna() & (df["per"] <= max_per)
+    df["c6_pbr"] = df["pbr"].notna() & (df["pbr"] <= max_pbr)
+
+    cflags = ["c1_uptrend", "c2_q1_yoy", "c3_roe", "c4_por", "c5_per", "c6_pbr"]
+    df["pass_all"] = df[cflags].all(axis=1)
+    df["pass_count"] = df[cflags].sum(axis=1)
     return df
 
 

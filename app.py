@@ -131,15 +131,19 @@ def render_global() -> None:
         return
 
     with st.sidebar:
-        st.header("필터")
-        min_roe = st.slider("기준3 · 최근 3년 ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5, key="g_roe")
-        max_por = st.slider("기준4 · 영업이익 PER(POR) 상한", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5, key="g_por")
+        st.header("조절 필터")
+        min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5, key="g_roe")
+        max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5, key="g_por")
+        max_per = st.slider("PER 상한", 2.0, 50.0, config.DEFAULT_MAX_PER, 0.5, key="g_per")
+        max_pbr = st.slider("PBR 상한", 0.2, 10.0, config.DEFAULT_MAX_PBR, 0.1, key="g_pbr")
         st.divider()
         st.subheader("적용할 기준")
         c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True, key="g_c1")
         c2 = st.checkbox("② 최근 분기 영업이익 YoY 증가", value=True, key="g_c2")
         c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True, key="g_c3")
         c4 = st.checkbox("④ POR ≤ 상한", value=True, key="g_c4")
+        c5 = st.checkbox("⑤ PER ≤ 상한", value=True, key="g_c5")
+        c6 = st.checkbox("⑥ PBR ≤ 상한", value=True, key="g_c6")
         st.divider()
         mkts = st.multiselect("시장", ["US", "JP"], default=["US", "JP"],
                               format_func=lambda m: GMARKET_KR[m], key="g_mkt")
@@ -152,7 +156,10 @@ def render_global() -> None:
     roe_cols = ["roe_y0", "roe_y1", "roe_y2"]
     df["c3_roe"] = (df["roe_n"] == 3) & (df[roe_cols] >= min_roe).all(axis=1)
     df["c4_por"] = df["por"].notna() & (df["por"] <= max_por)
-    flags = {"c1_uptrend": c1, "c2_qyoy": c2, "c3_roe": c3, "c4_por": c4}
+    df["c5_per"] = df["per"].notna() & (df["per"] <= max_per)
+    df["c6_pbr"] = df["pbr"].notna() & (df["pbr"] <= max_pbr)
+    flags = {"c1_uptrend": c1, "c2_qyoy": c2, "c3_roe": c3, "c4_por": c4,
+             "c5_per": c5, "c6_pbr": c6}
     active = [k for k, v in flags.items() if v]
     mask = pd.Series(True, index=df.index)
     for k in active:
@@ -245,27 +252,33 @@ universe = _load_universe()
 
 # ── 사이드바: 필터 ───────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("필터")
-    min_roe = st.slider("기준3 · 최근 3년 ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5)
-    max_por = st.slider("기준4 · 영업이익 PER(POR) 상한", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5)
+    st.header("조절 필터")
+    min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5)
+    max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5)
+    max_per = st.slider("PER 상한", 2.0, 50.0, config.DEFAULT_MAX_PER, 0.5)
+    max_pbr = st.slider("PBR 상한", 0.2, 10.0, config.DEFAULT_MAX_PBR, 0.1)
     st.divider()
     st.subheader("적용할 기준")
     c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True)
     c2 = st.checkbox(f"② {config.QUARTER_YEAR} 1분기 영업이익 YoY 증가", value=True)
     c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True)
     c4 = st.checkbox("④ POR ≤ 상한", value=True)
+    c5 = st.checkbox("⑤ PER ≤ 상한", value=True)
+    c6 = st.checkbox("⑥ PBR ≤ 상한", value=True)
     st.divider()
     markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
     min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
     show_all = st.checkbox("기준 일부만 충족도 표시(통과 개수순)", value=False)
 
-df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por)
+df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por,
+                     max_per=max_per, max_pbr=max_pbr)
 df = df[df["market"].isin(markets)]
 if min_cap > 0:
     df = df[df["marcap"] >= min_cap * 1e8]
 
 # 선택된 기준만 AND 결합
-flags = {"c1_uptrend": c1, "c2_q1_yoy": c2, "c3_roe": c3, "c4_por": c4}
+flags = {"c1_uptrend": c1, "c2_q1_yoy": c2, "c3_roe": c3, "c4_por": c4,
+         "c5_per": c5, "c6_pbr": c6}
 active = [k for k, v in flags.items() if v]
 if active:
     mask = pd.Series(True, index=df.index)
@@ -296,7 +309,7 @@ t1, t2, _ = st.columns([1.5, 1.5, 6], gap="small")
 show_roe_yearly = t1.checkbox("연도별 ROE 펼치기", value=False)
 show_op_yearly = t2.checkbox("연간 영익 YoY 펼치기", value=False)
 
-# 표시 상위 N행만 주가차트·업종·공식PER/PBR 조회
+# 표시 상위 N행만 주가차트·업종 조회. PER/PBR은 필터와 일치하도록 계산값 사용.
 n_show = min(len(view), CHART_MAX_ROWS)
 codes_show = view["code"].tolist()[:n_show]
 pad = len(view) - n_show
@@ -305,11 +318,8 @@ with st.spinner("최근 1년 주가·업종 불러오는 중..."):
     infos = _naver_infos(codes_show)
 prices = charts + [[] for _ in range(pad)]
 sector_col = [i["sector"] for i in infos] + ["" for _ in range(pad)]
-# 네이버 공식 PER/PBR(지배주주 기준) 우선, 없으면 계산값(시총÷순이익/자본)
-per_naver = [i["per"] for i in infos] + [None] * pad
-pbr_naver = [i["pbr"] for i in infos] + [None] * pad
-per_col = [pn if pn is not None else pc for pn, pc in zip(per_naver, view["per"])]
-pbr_col = [pn if pn is not None else pc for pn, pc in zip(pbr_naver, view["pbr"])]
+per_col = view["per"]   # 시총÷순이익 (필터 기준과 동일)
+pbr_col = view["pbr"]   # 시총÷자본총계
 
 # 연도 라벨: '23, '24, '25 (config.YEARS 기준), 분기: '26
 yy = [f"'{str(y)[2:]}" for y in config.YEARS]          # ["'23","'24","'25"]

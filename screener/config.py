@@ -27,6 +27,8 @@ YEARS = [ANNUAL_YEAR - 2, ANNUAL_YEAR - 1, ANNUAL_YEAR]   # [2023, 2024, 2025]
 # ── 기본 필터 임계값(앱에서 슬라이더로 조정 가능) ──────────────────────────
 DEFAULT_MIN_ROE = 10.0      # 최근 3년 ROE 하한(%)
 DEFAULT_MAX_POR = 10.0      # 영업이익 기준 PER(POR) 상한
+DEFAULT_MAX_PER = 15.0      # PER 상한
+DEFAULT_MAX_PBR = 2.0       # PBR 상한
 
 # ── 경로 ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
