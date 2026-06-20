@@ -156,6 +156,9 @@ def render_global() -> None:
         min_cap = st.number_input("최소 시총 (억원)", 0, 100_000_000, 0, step=1000, key="g_cap")
 
     df = gdf[gdf["market"].isin(mkts)].copy()
+    for col in ("gross_margin", "op_margin", "net_margin"):   # 구버전 캐시 방어
+        if col not in df.columns:
+            df[col] = float("nan")
     if min_cap > 0:
         df = df[df["marcap"] >= min_cap]
 

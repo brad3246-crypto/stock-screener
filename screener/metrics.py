@@ -17,6 +17,14 @@ def _roe(ni, eq):
     return ni / eq * 100.0
 
 
+def _num(df, name):
+    """컬럼이 없어도(구버전 캐시 등) 안전하게 숫자 Series 반환."""
+    s = df.get(name)
+    if s is None:
+        return pd.Series(np.nan, index=df.index, dtype="float64")
+    return pd.to_numeric(s, errors="coerce")
+
+
 def compute(
     fund: pd.DataFrame,
     universe: pd.DataFrame,
@@ -35,12 +43,12 @@ def compute(
     for yr in config.YEARS:
         df[f"roe_{yr}"] = [
             _roe(ni, eq)
-            for ni, eq in zip(df.get(f"net_income_{yr}"), df.get(f"equity_{yr}"))
+            for ni, eq in zip(_num(df, f"net_income_{yr}"), _num(df, f"equity_{yr}"))
         ]
 
     # ── 영업이익 기준 PER (POR) ──────────────────────────────────────────
-    op_annual = pd.to_numeric(df.get(f"op_profit_{Y2}"), errors="coerce")
-    op_q1 = pd.to_numeric(df.get(f"op_profit_q1_{QY}"), errors="coerce")
+    op_annual = _num(df, f"op_profit_{Y2}")
+    op_q1 = _num(df, f"op_profit_q1_{QY}")
     op_q1_ann = op_q1 * 4
     marcap = pd.to_numeric(df["marcap"], errors="coerce")
 
@@ -49,14 +57,14 @@ def compute(
     df["por"] = df[["por_annual", "por_q1x4"]].min(axis=1)   # 둘 중 낮은 값
 
     # ── PER(시총÷순이익) · PBR(시총÷자본총계), FY{Y2} 기준 ────────────────
-    ni_y2 = pd.to_numeric(df.get(f"net_income_{Y2}"), errors="coerce")
-    eq_y2 = pd.to_numeric(df.get(f"equity_{Y2}"), errors="coerce")
+    ni_y2 = _num(df, f"net_income_{Y2}")
+    eq_y2 = _num(df, f"equity_{Y2}")
     df["per"] = np.where(ni_y2 > 0, marcap / ni_y2, np.nan)
     df["pbr"] = np.where(eq_y2 > 0, marcap / eq_y2, np.nan)
 
     # ── 기준 1: 최근 2년 영업이익 우상향 (전전기<전기<당기) ───────────────
-    o0 = pd.to_numeric(df.get(f"op_profit_{Y0}"), errors="coerce")
-    o1 = pd.to_numeric(df.get(f"op_profit_{Y1}"), errors="coerce")
+    o0 = _num(df, f"op_profit_{Y0}")
+    o1 = _num(df, f"op_profit_{Y1}")
     o2 = op_annual
     df["op_yoy_24"] = (o1 / o0.abs() - 1) * 100
     df["op_yoy_25"] = (o2 / o1.abs() - 1) * 100
@@ -64,7 +72,7 @@ def compute(
 
     # ── 기준 2: 올해 1분기 영업이익 YoY 증가 ─────────────────────────────
     q_cur = op_q1
-    q_prev = pd.to_numeric(df.get(f"op_profit_q1_{PQY}"), errors="coerce")
+    q_prev = _num(df, f"op_profit_q1_{PQY}")
     df["op_q1_yoy"] = (q_cur / q_prev.abs() - 1) * 100
     df["c2_q1_yoy"] = q_cur.notna() & q_prev.notna() & (q_cur > q_prev)
 
@@ -81,8 +89,8 @@ def compute(
     df["c6_pbr"] = df["pbr"].notna() & (df["pbr"] <= max_pbr)
 
     # ── 이익률 (FY 최근) + 기준 7·8·9: 이익률 >= 하한 ─────────────────────
-    rev = pd.to_numeric(df.get(f"revenue_{Y2}"), errors="coerce")
-    gp = pd.to_numeric(df.get(f"gross_profit_{Y2}"), errors="coerce")
+    rev = _num(df, f"revenue_{Y2}")
+    gp = _num(df, f"gross_profit_{Y2}")
     df["gross_margin"] = np.where(rev > 0, gp / rev * 100, np.nan)
     df["op_margin"] = np.where(rev > 0, op_annual / rev * 100, np.nan)
     df["net_margin"] = np.where(rev > 0, ni_y2 / rev * 100, np.nan)
