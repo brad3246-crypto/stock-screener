@@ -104,6 +104,8 @@ def fetch_one(ticker: str) -> dict:
         rec["op_y0"], rec["op_y1"], rec["op_y2"] = op[2], op[1], op[0]  # [Y-2, Y-1, Y]
         rec["ni_y0"], rec["ni_y1"], rec["ni_y2"] = ni[2], ni[1], ni[0]
         rec["eq_y0"], rec["eq_y1"], rec["eq_y2"] = eq[2], eq[1], eq[0]
+        rec["rev_y2"] = _vals(_row(isa, ["Total Revenue", "Operating Revenue"]))[0]
+        rec["gp_y2"] = _vals(_row(isa, ["Gross Profit"]))[0]
         qop = _row(q, ["Operating Income"])
         qv = [float(x) if pd.notna(x) else None for x in list(qop.values)] if qop is not None else []
         rec["op_q_cur"] = qv[0] if len(qv) > 0 else None       # 최신 분기
@@ -163,4 +165,12 @@ def to_frame(records: list, universe: pd.DataFrame, fx: dict) -> pd.DataFrame:
     df["por"] = df[["por_annual", "por_q1x4"]].min(axis=1)
     df["per"] = pd.to_numeric(df.get("per"), errors="coerce")
     df["pbr"] = pd.to_numeric(df.get("pbr"), errors="coerce")
+
+    # 이익률 (최근 연도)
+    rev = pd.to_numeric(df.get("rev_y2"), errors="coerce")
+    gp = pd.to_numeric(df.get("gp_y2"), errors="coerce")
+    ni2 = pd.to_numeric(df.get("ni_y2"), errors="coerce")
+    df["gross_margin"] = np.where(rev > 0, gp / rev * 100, np.nan)
+    df["op_margin"] = np.where(rev > 0, o2 / rev * 100, np.nan)
+    df["net_margin"] = np.where(rev > 0, ni2 / rev * 100, np.nan)
     return df

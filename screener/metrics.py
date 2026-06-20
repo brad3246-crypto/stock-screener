@@ -24,6 +24,9 @@ def compute(
     max_por: float = config.DEFAULT_MAX_POR,
     max_per: float = 1e9,
     max_pbr: float = 1e9,
+    min_gm: float = -1e9,
+    min_om: float = -1e9,
+    min_nm: float = -1e9,
 ) -> pd.DataFrame:
     """파생 지표 + 기준 플래그가 붙은 DataFrame 반환."""
     df = universe.merge(fund, on="code", how="inner")
@@ -77,6 +80,17 @@ def compute(
     df["c5_per"] = df["per"].notna() & (df["per"] <= max_per)
     df["c6_pbr"] = df["pbr"].notna() & (df["pbr"] <= max_pbr)
 
+    # ── 이익률 (FY 최근) + 기준 7·8·9: 이익률 >= 하한 ─────────────────────
+    rev = pd.to_numeric(df.get(f"revenue_{Y2}"), errors="coerce")
+    gp = pd.to_numeric(df.get(f"gross_profit_{Y2}"), errors="coerce")
+    df["gross_margin"] = np.where(rev > 0, gp / rev * 100, np.nan)
+    df["op_margin"] = np.where(rev > 0, op_annual / rev * 100, np.nan)
+    df["net_margin"] = np.where(rev > 0, ni_y2 / rev * 100, np.nan)
+    df["c7_gm"] = df["gross_margin"].notna() & (df["gross_margin"] >= min_gm)
+    df["c8_om"] = df["op_margin"].notna() & (df["op_margin"] >= min_om)
+    df["c9_nm"] = df["net_margin"].notna() & (df["net_margin"] >= min_nm)
+
+    # pass_all/전 기준 통과 = 핵심 6기준(이익률은 앱 선택 필터로만)
     cflags = ["c1_uptrend", "c2_q1_yoy", "c3_roe", "c4_por", "c5_per", "c6_pbr"]
     df["pass_all"] = df[cflags].all(axis=1)
     df["pass_count"] = df[cflags].sum(axis=1)

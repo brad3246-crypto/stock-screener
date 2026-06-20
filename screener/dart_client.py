@@ -120,6 +120,24 @@ def fetch_quarter(code: str) -> dict | None:
     return out
 
 
+def fetch_gross(code: str) -> float | None:
+    """FY 매출총이익 (전체재무제표). 단일식 손익·서비스/금융기업은 None."""
+    for fsdiv in ("CFS", "OFS"):
+        try:
+            fs = get_dart().finstate_all(
+                code, config.ANNUAL_YEAR, reprt_code=config.ANNUAL_REPRT, fs_div=fsdiv
+            )
+        except Exception:
+            continue
+        if fs is None or len(fs) == 0:
+            continue
+        nm = fs["account_nm"].astype(str).str.replace(r"\s+", "", regex=True)
+        r = fs[nm == "매출총이익"]
+        if not r.empty:
+            return to_num(r.iloc[0].get("thstrm_amount"))
+    return None
+
+
 def fetch_company(code: str) -> dict:
     """한 종목의 연간+분기 재무를 합친 dict (실패해도 code는 항상 포함)."""
     rec: dict = {"code": code}
@@ -129,6 +147,7 @@ def fetch_company(code: str) -> dict:
     q = fetch_quarter(code)
     if q:
         rec.update(q)
+    rec[f"gross_profit_{config.ANNUAL_YEAR}"] = fetch_gross(code)
     rec["has_annual"] = ann is not None
     rec["has_quarter"] = q is not None
     return rec
