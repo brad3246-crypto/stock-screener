@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import FinanceDataReader as fdr
 import pandas as pd
+import requests
 import streamlit as st
 
 from screener import config, metrics
@@ -38,6 +40,39 @@ def _price_history(code: str) -> list:
 def _histories(codes: list) -> list:
     with ThreadPoolExecutor(max_workers=8) as ex:
         return list(ex.map(_price_history, codes))
+
+
+def _to_float(s):
+    try:
+        return float(str(s).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _naver_info(code: str) -> dict:
+    """네이버 종목페이지에서 업종·공식PER·PBR 스크랩. 실패 시 빈 값."""
+    try:
+        raw = requests.get(
+            f"https://finance.naver.com/item/main.naver?code={code}",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=8,
+        ).content
+        html = raw.decode("utf-8", "replace")
+        sec = re.search(r"sise_group_detail\.naver\?type=upjong[^>]*>([^<]+)</a>", html)
+        per = re.search(r'id="_per"[^>]*>([\d,.\-]+)', html)
+        pbr = re.search(r'id="_pbr"[^>]*>([\d,.\-]+)', html)
+        return {
+            "sector": sec.group(1).strip() if sec else "",
+            "per": _to_float(per.group(1)) if per else None,
+            "pbr": _to_float(pbr.group(1)) if pbr else None,
+        }
+    except Exception:
+        return {"sector": "", "per": None, "pbr": None}
+
+
+def _naver_infos(codes: list) -> list:
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(_naver_info, codes))
 
 
 @st.cache_data(ttl=900)
@@ -126,25 +161,38 @@ m4.metric("기준일", dt.date.today().isoformat())
 view = view.reset_index(drop=True)
 
 st.caption("표의 열 제목을 클릭하면 그 값 기준으로 정렬됩니다 ↑↓")
-show_roe_yearly = st.checkbox("연도별 ROE 펼쳐 보기", value=False)
+t1, t2 = st.columns(2)
+show_roe_yearly = t1.checkbox("연도별 ROE 펼쳐 보기", value=False)
+show_op_yearly = t2.checkbox("연간 영익 YoY 펼쳐 보기", value=False)
 
-# 미니차트용 최근 1년 주가 (상위 N행만 조회)
-chart_codes = view["code"].tolist()[:CHART_MAX_ROWS]
-with st.spinner("최근 1년 주가 차트 불러오는 중..."):
-    charts = _histories(chart_codes)
-prices = charts + [[] for _ in range(len(view) - len(chart_codes))]
+# 표시 상위 N행만 주가차트·업종·공식PER/PBR 조회
+n_show = min(len(view), CHART_MAX_ROWS)
+codes_show = view["code"].tolist()[:n_show]
+pad = len(view) - n_show
+with st.spinner("최근 1년 주가·업종 불러오는 중..."):
+    charts = _histories(codes_show)
+    infos = _naver_infos(codes_show)
+prices = charts + [[] for _ in range(pad)]
+sector_col = [i["sector"] for i in infos] + ["" for _ in range(pad)]
+# 네이버 공식 PER/PBR(지배주주 기준) 우선, 없으면 계산값(시총÷순이익/자본)
+per_naver = [i["per"] for i in infos] + [None] * pad
+pbr_naver = [i["pbr"] for i in infos] + [None] * pad
+per_col = [pn if pn is not None else pc for pn, pc in zip(per_naver, view["per"])]
+pbr_col = [pn if pn is not None else pc for pn, pc in zip(pbr_naver, view["pbr"])]
 
 # 연도 라벨: '23, '24, '25 (config.YEARS 기준), 분기: '26
 yy = [f"'{str(y)[2:]}" for y in config.YEARS]          # ["'23","'24","'25"]
 qy = f"'{str(config.QUARTER_YEAR)[2:]}"                 # "'26"
 roe_avg = view[["roe_2023", "roe_2024", "roe_2025"]].mean(axis=1)
+POR_Q = "POR (1Q x 4)"
 
-# 시장 → 종목코드 → 1년 주가차트 → 종목명 → 시총 → ROE평균 →(연도별 ROE)→ 영익YoY → POR …
+# 시장 → 종목코드 → 주가 → 종목명 → 업종 → 시총 → ROE평균 →(연ROE)→ POR → PER/PBR →(연영익)→ 1Q영익
 data = {
     "시장": view["market"].map(MARKET_KR).fillna(view["market"]),
     "종목코드": view["code"],
     "1년 주가": prices,
     "종목명": view["name"],
+    "업종": sector_col,
     "시총(억)": (view["marcap"] / 1e8).round(0),
     "ROE평균": roe_avg,
 }
@@ -152,26 +200,27 @@ if show_roe_yearly:
     data[f"{yy[0]} ROE"] = view["roe_2023"]
     data[f"{yy[1]} ROE"] = view["roe_2024"]
     data[f"{yy[2]} ROE"] = view["roe_2025"]
-data[f"{yy[1]} YoY 영익"] = view["op_yoy_24"]
-data[f"{yy[2]} YoY 영익"] = view["op_yoy_25"]
+data["POR 연간"] = view["por_annual"]
+data[POR_Q] = view["por_q1x4"]
+data["PER"] = per_col
+data["PBR"] = pbr_col
+if show_op_yearly:
+    data[f"{yy[1]} YoY 영익"] = view["op_yoy_24"]
+    data[f"{yy[2]} YoY 영익"] = view["op_yoy_25"]
 data[f"{qy} 1Q YoY 영익"] = view["op_q1_yoy"]
-data["POR연간"] = view["por_annual"]
-data["POR(1Qx4)"] = view["por_q1x4"]
-data["POR"] = view["por"]
-data["①"] = view["c1_uptrend"]
-data["②"] = view["c2_q1_yoy"]
-data["③"] = view["c3_roe"]
-data["④"] = view["c4_por"]
-data["충족수"] = view["pass_count"]
 disp = pd.DataFrame(data)
 
-# 천단위 쉼표(소수 1자리) — ROE/영익/POR. 시총은 정수 쉼표.
-pct_cols = ["ROE평균", f"{yy[1]} YoY 영익", f"{yy[2]} YoY 영익", f"{qy} 1Q YoY 영익",
-            "POR연간", "POR(1Qx4)", "POR"]
+# 천단위 쉼표 포맷
+f1 = ["ROE평균", "POR 연간", POR_Q, f"{qy} 1Q YoY 영익"]
 if show_roe_yearly:
-    pct_cols += [f"{yy[0]} ROE", f"{yy[1]} ROE", f"{yy[2]} ROE"]
-colcfg = {c: st.column_config.NumberColumn(format="%,.1f") for c in pct_cols}
+    f1 += [f"{yy[0]} ROE", f"{yy[1]} ROE", f"{yy[2]} ROE"]
+if show_op_yearly:
+    f1 += [f"{yy[1]} YoY 영익", f"{yy[2]} YoY 영익"]
+colcfg = {c: st.column_config.NumberColumn(format="%,.1f") for c in f1}
+colcfg["PER"] = st.column_config.NumberColumn(format="%,.2f")
+colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
+colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
 colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
 st.dataframe(
     disp,
@@ -183,7 +232,7 @@ st.dataframe(
 
 st.download_button(
     "결과 CSV 다운로드",
-    view[metrics.DISPLAY_COLS].to_csv(index=False).encode("utf-8-sig"),
+    disp.drop(columns=["1년 주가"]).to_csv(index=False).encode("utf-8-sig"),
     file_name=f"screener_{dt.date.today():%Y%m%d}.csv",
     mime="text/csv",
 )

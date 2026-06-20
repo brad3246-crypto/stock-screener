@@ -43,6 +43,12 @@ def compute(
     df["por_q1x4"] = np.where(op_q1_ann > 0, marcap / op_q1_ann, np.nan)
     df["por"] = df[["por_annual", "por_q1x4"]].min(axis=1)   # 둘 중 낮은 값
 
+    # ── PER(시총÷순이익) · PBR(시총÷자본총계), FY{Y2} 기준 ────────────────
+    ni_y2 = pd.to_numeric(df.get(f"net_income_{Y2}"), errors="coerce")
+    eq_y2 = pd.to_numeric(df.get(f"equity_{Y2}"), errors="coerce")
+    df["per"] = np.where(ni_y2 > 0, marcap / ni_y2, np.nan)
+    df["pbr"] = np.where(eq_y2 > 0, marcap / eq_y2, np.nan)
+
     # ── 기준 1: 최근 2년 영업이익 우상향 (전전기<전기<당기) ───────────────
     o0 = pd.to_numeric(df.get(f"op_profit_{Y0}"), errors="coerce")
     o1 = pd.to_numeric(df.get(f"op_profit_{Y1}"), errors="coerce")
