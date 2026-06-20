@@ -125,31 +125,53 @@ m4.metric("기준일", dt.date.today().isoformat())
 # ── 결과 표 ─────────────────────────────────────────────────────────────
 view = view.reset_index(drop=True)
 
+st.caption("표의 열 제목을 클릭하면 그 값 기준으로 정렬됩니다 ↑↓")
+show_roe_yearly = st.checkbox("연도별 ROE 펼쳐 보기", value=False)
+
 # 미니차트용 최근 1년 주가 (상위 N행만 조회)
 chart_codes = view["code"].tolist()[:CHART_MAX_ROWS]
 with st.spinner("최근 1년 주가 차트 불러오는 중..."):
     charts = _histories(chart_codes)
 prices = charts + [[] for _ in range(len(view) - len(chart_codes))]
 
-# 시장(코스피/코스닥) → 종목코드 → 1년 주가차트 → 종목명 → 나머지 순
-disp = pd.DataFrame({
+# 연도 라벨: '23, '24, '25 (config.YEARS 기준), 분기: '26
+yy = [f"'{str(y)[2:]}" for y in config.YEARS]          # ["'23","'24","'25"]
+qy = f"'{str(config.QUARTER_YEAR)[2:]}"                 # "'26"
+roe_avg = view[["roe_2023", "roe_2024", "roe_2025"]].mean(axis=1)
+
+# 시장 → 종목코드 → 1년 주가차트 → 종목명 → 시총 → ROE평균 →(연도별 ROE)→ 영익YoY → POR …
+data = {
     "시장": view["market"].map(MARKET_KR).fillna(view["market"]),
     "종목코드": view["code"],
     "1년 주가": prices,
     "종목명": view["name"],
     "시총(억)": (view["marcap"] / 1e8).round(0),
-    "ROE23": view["roe_2023"], "ROE24": view["roe_2024"], "ROE25": view["roe_2025"],
-    "ROE최소": view["roe_min3y"],
-    "영익YoY24": view["op_yoy_24"], "영익YoY25": view["op_yoy_25"], "1Q영익YoY": view["op_q1_yoy"],
-    "POR연간": view["por_annual"], "POR(1Qx4)": view["por_q1x4"], "POR": view["por"],
-    "①": view["c1_uptrend"], "②": view["c2_q1_yoy"], "③": view["c3_roe"], "④": view["c4_por"],
-    "충족수": view["pass_count"],
-})
+    "ROE평균": roe_avg,
+}
+if show_roe_yearly:
+    data[f"{yy[0]} ROE"] = view["roe_2023"]
+    data[f"{yy[1]} ROE"] = view["roe_2024"]
+    data[f"{yy[2]} ROE"] = view["roe_2025"]
+data[f"{yy[1]} YoY 영익"] = view["op_yoy_24"]
+data[f"{yy[2]} YoY 영익"] = view["op_yoy_25"]
+data[f"{qy} 1Q YoY 영익"] = view["op_q1_yoy"]
+data["POR연간"] = view["por_annual"]
+data["POR(1Qx4)"] = view["por_q1x4"]
+data["POR"] = view["por"]
+data["①"] = view["c1_uptrend"]
+data["②"] = view["c2_q1_yoy"]
+data["③"] = view["c3_roe"]
+data["④"] = view["c4_por"]
+data["충족수"] = view["pass_count"]
+disp = pd.DataFrame(data)
 
-num_cols = ["ROE23", "ROE24", "ROE25", "ROE최소", "영익YoY24", "영익YoY25",
-            "1Q영익YoY", "POR연간", "POR(1Qx4)", "POR"]
-colcfg = {c: st.column_config.NumberColumn(format="%.1f") for c in num_cols}
-colcfg["시총(억)"] = st.column_config.NumberColumn(format="%d")
+# 천단위 쉼표(소수 1자리) — ROE/영익/POR. 시총은 정수 쉼표.
+pct_cols = ["ROE평균", f"{yy[1]} YoY 영익", f"{yy[2]} YoY 영익", f"{qy} 1Q YoY 영익",
+            "POR연간", "POR(1Qx4)", "POR"]
+if show_roe_yearly:
+    pct_cols += [f"{yy[0]} ROE", f"{yy[1]} ROE", f"{yy[2]} ROE"]
+colcfg = {c: st.column_config.NumberColumn(format="%,.1f") for c in pct_cols}
+colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
 colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
 st.dataframe(
     disp,
