@@ -6,14 +6,38 @@
 from __future__ import annotations
 
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 
+import FinanceDataReader as fdr
 import pandas as pd
 import streamlit as st
 
 from screener import config, metrics
 from screener.universe import load_universe
 
-st.set_page_config(page_title="수급 소외 실적주 스크리너", layout="wide")
+st.set_page_config(page_title="수급 소외 실적주 스크리너 by 웅", layout="wide")
+
+MARKET_KR = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
+CHART_MAX_ROWS = 60   # 미니차트는 상위 N행만(주가 조회 부담 방지)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _price_history(code: str) -> list:
+    """최근 1년 종가를 주 단위(약 50포인트)로. 실패 시 빈 리스트."""
+    try:
+        start = (dt.date.today() - dt.timedelta(days=365)).isoformat()
+        h = fdr.DataReader(code, start)
+        if h is None or h.empty or "Close" not in h.columns:
+            return []
+        s = h["Close"].dropna().iloc[::5]
+        return [round(float(x), 1) for x in s.tolist()]
+    except Exception:
+        return []
+
+
+def _histories(codes: list) -> list:
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(_price_history, codes))
 
 
 @st.cache_data(ttl=900)
@@ -37,7 +61,7 @@ def _load_universe() -> pd.DataFrame:
     raise RuntimeError("유니버스 로드 실패: FDR 호출 불가 + 캐시 없음")
 
 
-st.title("📉 수급 소외 실적주 스크리너")
+st.title("📉 수급 소외 실적주 스크리너 by 웅")
 st.caption(
     "ADR 바닥 · 업종 쏠림 국면에서 실적은 우상향인데 수급에서 소외된 종목을 거른다. "
     f"기준연도 FY{config.ANNUAL_YEAR} 연간 · {config.QUARTER_YEAR} 1분기 (KOSPI/KOSDAQ)"
@@ -99,22 +123,40 @@ m3.metric("현재 필터 통과", f"{len(passed):,}")
 m4.metric("기준일", dt.date.today().isoformat())
 
 # ── 결과 표 ─────────────────────────────────────────────────────────────
-disp = view[metrics.DISPLAY_COLS].copy()
-disp["marcap"] = (disp["marcap"] / 1e8).round(0)   # 억원
-disp = disp.rename(columns={
-    "code": "종목코드", "name": "종목명", "market": "시장", "marcap": "시총(억)",
-    "roe_2023": "ROE23", "roe_2024": "ROE24", "roe_2025": "ROE25", "roe_min3y": "ROE최소",
-    "op_yoy_24": "영익YoY24", "op_yoy_25": "영익YoY25", "op_q1_yoy": "1Q영익YoY",
-    "por_annual": "POR연간", "por_q1x4": "POR(1Qx4)", "por": "POR",
-    "c1_uptrend": "①", "c2_q1_yoy": "②", "c3_roe": "③", "c4_por": "④",
-    "pass_count": "충족수",
+view = view.reset_index(drop=True)
+
+# 미니차트용 최근 1년 주가 (상위 N행만 조회)
+chart_codes = view["code"].tolist()[:CHART_MAX_ROWS]
+with st.spinner("최근 1년 주가 차트 불러오는 중..."):
+    charts = _histories(chart_codes)
+prices = charts + [[] for _ in range(len(view) - len(chart_codes))]
+
+# 시장(코스피/코스닥) → 종목코드 → 1년 주가차트 → 종목명 → 나머지 순
+disp = pd.DataFrame({
+    "시장": view["market"].map(MARKET_KR).fillna(view["market"]),
+    "종목코드": view["code"],
+    "1년 주가": prices,
+    "종목명": view["name"],
+    "시총(억)": (view["marcap"] / 1e8).round(0),
+    "ROE23": view["roe_2023"], "ROE24": view["roe_2024"], "ROE25": view["roe_2025"],
+    "ROE최소": view["roe_min3y"],
+    "영익YoY24": view["op_yoy_24"], "영익YoY25": view["op_yoy_25"], "1Q영익YoY": view["op_q1_yoy"],
+    "POR연간": view["por_annual"], "POR(1Qx4)": view["por_q1x4"], "POR": view["por"],
+    "①": view["c1_uptrend"], "②": view["c2_q1_yoy"], "③": view["c3_roe"], "④": view["c4_por"],
+    "충족수": view["pass_count"],
 })
+
 num_cols = ["ROE23", "ROE24", "ROE25", "ROE최소", "영익YoY24", "영익YoY25",
             "1Q영익YoY", "POR연간", "POR(1Qx4)", "POR"]
+colcfg = {c: st.column_config.NumberColumn(format="%.1f") for c in num_cols}
+colcfg["시총(억)"] = st.column_config.NumberColumn(format="%d")
+colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
 st.dataframe(
-    disp.style.format({c: "{:.1f}" for c in num_cols}, na_rep="-"),
+    disp,
+    column_config=colcfg,
     use_container_width=True,
     height=560,
+    hide_index=True,
 )
 
 st.download_button(
