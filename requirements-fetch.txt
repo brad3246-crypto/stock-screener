@@ -3,6 +3,7 @@ pandas>=2.3,<3
 pyarrow>=20
 finance-datareader>=0.9.20
 OpenDartReader>=0.3.2
+yfinance>=0.2
 requests
 lxml
 beautifulsoup4

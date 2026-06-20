@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 FUNDAMENTALS_PARQUET = DATA_DIR / "fundamentals.parquet"
 UNIVERSE_PARQUET = DATA_DIR / "universe.parquet"
+GLOBAL_PARQUET = DATA_DIR / "global_fundamentals.parquet"   # 미국·일본
 
 # ── DART 호출 ────────────────────────────────────────────────────────────
 FETCH_WORKERS = 8           # 동시 호출 스레드 수

@@ -4,6 +4,7 @@ streamlit>=1.58
 pandas>=2.3,<3
 pyarrow>=20
 finance-datareader>=0.9.20
+yfinance>=0.2
 requests
 lxml
 beautifulsoup4

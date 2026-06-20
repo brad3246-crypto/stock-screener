@@ -13,6 +13,7 @@ import FinanceDataReader as fdr
 import pandas as pd
 import requests
 import streamlit as st
+import yfinance as yf
 
 from screener import config, metrics
 from screener.universe import load_universe
@@ -20,6 +21,7 @@ from screener.universe import load_universe
 st.set_page_config(page_title="수급 소외 실적주 스크리너 by 웅", layout="wide")
 
 MARKET_KR = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
+GMARKET_KR = {"US": "미국", "JP": "일본"}
 CHART_MAX_ROWS = 60   # 미니차트는 상위 N행만(주가 조회 부담 방지)
 
 
@@ -96,7 +98,136 @@ def _load_universe() -> pd.DataFrame:
     raise RuntimeError("유니버스 로드 실패: FDR 호출 불가 + 캐시 없음")
 
 
+# ── 미국·일본 (yfinance) ─────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def _load_global() -> pd.DataFrame:
+    if not config.GLOBAL_PARQUET.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(config.GLOBAL_PARQUET)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _g_price(ticker: str) -> list:
+    try:
+        h = yf.Ticker(ticker).history(period="1y")
+        if h is None or h.empty or "Close" not in h.columns:
+            return []
+        s = h["Close"].dropna().iloc[::5]
+        return [round(float(x), 2) for x in s.tolist()]
+    except Exception:
+        return []
+
+
+def _g_prices(tickers: list) -> list:
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(_g_price, tickers))
+
+
+def render_global() -> None:
+    st.caption("미국 S&P500 · 일본 닛케이225. 회계연도 차이로 ②는 **최근 분기 YoY**로 적용. 시총은 환율로 원화(억) 환산.")
+    gdf = _load_global()
+    if gdf.empty:
+        st.error("미국·일본 캐시가 없습니다. 터미널에서 실행하세요:\n\n```\npython -m screener.global_fetch\n```")
+        return
+
+    with st.sidebar:
+        st.header("필터")
+        min_roe = st.slider("기준3 · 최근 3년 ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5, key="g_roe")
+        max_por = st.slider("기준4 · 영업이익 PER(POR) 상한", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5, key="g_por")
+        st.divider()
+        st.subheader("적용할 기준")
+        c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True, key="g_c1")
+        c2 = st.checkbox("② 최근 분기 영업이익 YoY 증가", value=True, key="g_c2")
+        c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True, key="g_c3")
+        c4 = st.checkbox("④ POR ≤ 상한", value=True, key="g_c4")
+        st.divider()
+        mkts = st.multiselect("시장", ["US", "JP"], default=["US", "JP"],
+                              format_func=lambda m: GMARKET_KR[m], key="g_mkt")
+        min_cap = st.number_input("최소 시총 (억원)", 0, 100_000_000, 0, step=1000, key="g_cap")
+
+    df = gdf[gdf["market"].isin(mkts)].copy()
+    if min_cap > 0:
+        df = df[df["marcap"] >= min_cap]
+
+    roe_cols = ["roe_y0", "roe_y1", "roe_y2"]
+    df["c3_roe"] = (df["roe_n"] == 3) & (df[roe_cols] >= min_roe).all(axis=1)
+    df["c4_por"] = df["por"].notna() & (df["por"] <= max_por)
+    flags = {"c1_uptrend": c1, "c2_qyoy": c2, "c3_roe": c3, "c4_por": c4}
+    active = [k for k, v in flags.items() if v]
+    mask = pd.Series(True, index=df.index)
+    for k in active:
+        mask &= df[k]
+    view = df[mask].sort_values("por", ascending=True).reset_index(drop=True)
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("유니버스", f"{len(df):,}")
+    m2.metric("현재 필터 통과", f"{len(view):,}")
+    m3.metric("기준일", dt.date.today().isoformat())
+
+    st.caption("표의 열 제목을 클릭하면 정렬됩니다 ↑↓")
+    g1, g2, _ = st.columns([1.5, 1.5, 6], gap="small")
+    show_roe = g1.checkbox("연도별 ROE 펼치기", value=False, key="g_roey")
+    show_op = g2.checkbox("연간 영익 YoY 펼치기", value=False, key="g_opy")
+
+    n_show = min(len(view), CHART_MAX_ROWS)
+    with st.spinner("최근 1년 주가 불러오는 중..."):
+        charts = _g_prices(view["ticker"].tolist()[:n_show])
+    prices = charts + [[] for _ in range(len(view) - n_show)]
+    POR_Q = "POR (1Q x 4)"
+
+    data = {
+        "시장": view["market"].map(GMARKET_KR),
+        "종목코드": view["ticker"],
+        "1년 주가": prices,
+        "종목명": view["name"],
+        "업종": view["sector"],
+        "시총(억)": view["marcap"].round(0),
+        "POR 연간": view["por_annual"],
+        POR_Q: view["por_q1x4"],
+        "3년 ROE 평균": view["roe_avg"],
+    }
+    if show_roe:
+        data["ROE(-2)"] = view["roe_y0"]
+        data["ROE(-1)"] = view["roe_y1"]
+        data["ROE(최근)"] = view["roe_y2"]
+    data["PER"] = view["per"]
+    data["PBR"] = view["pbr"]
+    if show_op:
+        data["영익YoY(-1)"] = view["op_yoy_1"]
+        data["영익YoY(최근)"] = view["op_yoy_2"]
+    data["분기영익YoY"] = view["q_yoy"]
+    disp = pd.DataFrame(data)
+
+    f1 = ["3년 ROE 평균", "POR 연간", POR_Q, "분기영익YoY"]
+    if show_roe:
+        f1 += ["ROE(-2)", "ROE(-1)", "ROE(최근)"]
+    if show_op:
+        f1 += ["영익YoY(-1)", "영익YoY(최근)"]
+    colcfg = {c: st.column_config.NumberColumn(format="%,.1f") for c in f1}
+    colcfg["PER"] = st.column_config.NumberColumn(format="%,.2f")
+    colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
+    colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
+    colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
+    colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
+    st.dataframe(disp, column_config=colcfg, use_container_width=True, height=560, hide_index=True)
+
+    st.download_button(
+        "결과 CSV 다운로드",
+        disp.drop(columns=["1년 주가"]).to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"screener_global_{dt.date.today():%Y%m%d}.csv",
+        mime="text/csv",
+    )
+
+
 st.title("📉 수급 소외 실적주 스크리너 by 웅")
+_market_group = st.sidebar.radio(
+    "🌐 시장 구분", ["🇰🇷 한국 (KOSPI·KOSDAQ)", "🇺🇸 미국 · 🇯🇵 일본"], index=0
+)
+st.sidebar.divider()
+if _market_group.startswith("🇺🇸"):
+    render_global()
+    st.stop()
+
 st.caption(
     "ADR 바닥 · 업종 쏠림 국면에서 실적은 우상향인데 수급에서 소외된 종목을 거른다. "
     f"기준연도 FY{config.ANNUAL_YEAR} 연간 · {config.QUARTER_YEAR} 1분기 (KOSPI/KOSDAQ)"
