@@ -161,9 +161,9 @@ m4.metric("기준일", dt.date.today().isoformat())
 view = view.reset_index(drop=True)
 
 st.caption("표의 열 제목을 클릭하면 그 값 기준으로 정렬됩니다 ↑↓")
-t1, t2 = st.columns(2)
-show_roe_yearly = t1.checkbox("연도별 ROE 펼쳐 보기", value=False)
-show_op_yearly = t2.checkbox("연간 영익 YoY 펼쳐 보기", value=False)
+t1, t2, _ = st.columns([1.5, 1.5, 6], gap="small")
+show_roe_yearly = t1.checkbox("연도별 ROE 펼치기", value=False)
+show_op_yearly = t2.checkbox("연간 영익 YoY 펼치기", value=False)
 
 # 표시 상위 N행만 주가차트·업종·공식PER/PBR 조회
 n_show = min(len(view), CHART_MAX_ROWS)
@@ -186,7 +186,7 @@ qy = f"'{str(config.QUARTER_YEAR)[2:]}"                 # "'26"
 roe_avg = view[["roe_2023", "roe_2024", "roe_2025"]].mean(axis=1)
 POR_Q = "POR (1Q x 4)"
 
-# 시장 → 종목코드 → 주가 → 종목명 → 업종 → 시총 → ROE평균 →(연ROE)→ POR → PER/PBR →(연영익)→ 1Q영익
+# 시장 → 종목코드 → 주가 → 종목명 → 업종 → 시총 → POR연간 → POR(1Qx4) → 3년ROE평균 →(연ROE)→ PER/PBR →(연영익)→ 1Q영익
 data = {
     "시장": view["market"].map(MARKET_KR).fillna(view["market"]),
     "종목코드": view["code"],
@@ -194,14 +194,14 @@ data = {
     "종목명": view["name"],
     "업종": sector_col,
     "시총(억)": (view["marcap"] / 1e8).round(0),
-    "ROE평균": roe_avg,
+    "POR 연간": view["por_annual"],
+    POR_Q: view["por_q1x4"],
+    "3년 ROE 평균": roe_avg,
 }
 if show_roe_yearly:
     data[f"{yy[0]} ROE"] = view["roe_2023"]
     data[f"{yy[1]} ROE"] = view["roe_2024"]
     data[f"{yy[2]} ROE"] = view["roe_2025"]
-data["POR 연간"] = view["por_annual"]
-data[POR_Q] = view["por_q1x4"]
 data["PER"] = per_col
 data["PBR"] = pbr_col
 if show_op_yearly:
@@ -211,7 +211,7 @@ data[f"{qy} 1Q YoY 영익"] = view["op_q1_yoy"]
 disp = pd.DataFrame(data)
 
 # 천단위 쉼표 포맷
-f1 = ["ROE평균", "POR 연간", POR_Q, f"{qy} 1Q YoY 영익"]
+f1 = ["3년 ROE 평균", "POR 연간", POR_Q, f"{qy} 1Q YoY 영익"]
 if show_roe_yearly:
     f1 += [f"{yy[0]} ROE", f"{yy[1]} ROE", f"{yy[2]} ROE"]
 if show_op_yearly:
