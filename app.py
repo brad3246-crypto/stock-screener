@@ -145,7 +145,7 @@ def _g_prices(tickers: list) -> list:
 
 
 def render_global() -> None:
-    st.caption("미국 S&P500 · 일본 닛케이225. 회계연도 차이로 ②는 **최근 분기 YoY**로 적용. 시총은 환율로 원화(억) 환산.")
+    st.caption("미국 S&P500 · 일본 닛케이225. ②는 **최근 분기 YoY**로 적용하되, 분기 데이터가 없으면(일본 다수) **최근 연간 YoY로 대체**. 시총은 환율로 원화(억) 환산.")
     gdf = _load_global()
     if gdf.empty:
         st.error("미국·일본 캐시가 없습니다. 터미널에서 실행하세요:\n\n```\npython -m screener.global_fetch\n```")
@@ -163,7 +163,7 @@ def render_global() -> None:
         st.divider()
         st.subheader("적용할 기준")
         c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True, key="g_c1")
-        c2 = st.checkbox("② 최근 분기 영업이익 YoY 증가", value=True, key="g_c2")
+        c2 = st.checkbox("② 최근 영업이익 YoY 증가 (분기·없으면 연간)", value=True, key="g_c2")
         c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True, key="g_c3")
         c4 = st.checkbox("④ POR ≤ 상한", value=True, key="g_c4")
         c5 = st.checkbox("⑤ PER ≤ 상한", value=True, key="g_c5")

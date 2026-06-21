@@ -170,8 +170,11 @@ def to_frame(records: list, universe: pd.DataFrame, fx: dict) -> pd.DataFrame:
 
     qc = pd.to_numeric(df.get("op_q_cur"), errors="coerce")
     qp = pd.to_numeric(df.get("op_q_prev"), errors="coerce")
-    df["q_yoy"] = (qc / qp.abs() - 1) * 100
-    df["c2_qyoy"] = qc.notna() & qp.notna() & (qc > qp)
+    has_q = qc.notna() & qp.notna()
+    # ② 최근 분기 영익 YoY 증가. 분기 데이터가 없으면(일본 다수) 최근 연간 영익 YoY로 대체
+    ann_up = o1.notna() & o2.notna() & (o2 > o1)
+    df["q_yoy"] = ((qc / qp.abs() - 1) * 100).where(has_q, df["op_yoy_2"])
+    df["c2_qyoy"] = (has_q & (qc > qp)) | (~has_q & ann_up)
 
     marcap_n = pd.to_numeric(df["marcap_native"], errors="coerce")
     import numpy as np
