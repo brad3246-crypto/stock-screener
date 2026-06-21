@@ -292,12 +292,12 @@ with st.sidebar:
     with st.form("kr_filter_form", border=False):
         st.header("조절 필터")
         st.caption("값을 조정한 뒤 맨 아래 **적용**을 눌러야 반영됩니다.")
-        min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, 15.0, 0.5)
+        min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, 10.0, 0.5)
         max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, 10.0, 0.5)
         max_per = st.slider("PER 상한", 2.0, 50.0, 15.0, 0.5)
         max_pbr = st.slider("PBR 상한", 0.2, 10.0, 3.0, 0.1)
-        max_gm = st.slider("매출총이익률(GPM) 상한 (%)", 0.0, 100.0, 80.0, 1.0)
-        min_om = st.slider("영업이익률(OPM) 하한 (%)", 0.0, 50.0, 5.0, 1.0)
+        min_gm = st.slider("매출총이익률(GPM) 하한 (%)", 0.0, 100.0, 25.0, 1.0)
+        min_om = st.slider("영업이익률(OPM) 하한 (%)", 0.0, 50.0, 10.0, 1.0)
         min_nm = st.slider("순이익률(NPM) 하한 (%)", 0.0, 50.0, 5.0, 1.0)
         st.divider()
         st.subheader("적용할 기준")
@@ -307,7 +307,7 @@ with st.sidebar:
         c4 = st.checkbox("④ POR ≤ 상한", value=True)
         c5 = st.checkbox("⑤ PER ≤ 상한", value=True)
         c6 = st.checkbox("⑥ PBR ≤ 상한", value=True)
-        c7 = st.checkbox("⑦ 매출총이익률(GPM) ≤ 상한", value=False)
+        c7 = st.checkbox("⑦ 매출총이익률(GPM) ≥ 하한", value=False)
         c8 = st.checkbox("⑧ 영업이익률(OPM) ≥ 하한", value=False)
         c9 = st.checkbox("⑨ 순이익률(NPM) ≥ 하한", value=False)
         st.divider()
@@ -318,7 +318,7 @@ with st.sidebar:
 
 df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por,
                      max_per=max_per, max_pbr=max_pbr,
-                     max_gm=max_gm, min_om=min_om, min_nm=min_nm)
+                     min_gm=min_gm, min_om=min_om, min_nm=min_nm)
 df = df[df["market"].isin(markets)]
 if min_cap > 0:
     df = df[df["marcap"] >= min_cap * 1e8]

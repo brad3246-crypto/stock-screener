@@ -32,7 +32,7 @@ def compute(
     max_por: float = config.DEFAULT_MAX_POR,
     max_per: float = 1e9,
     max_pbr: float = 1e9,
-    max_gm: float = 1e9,
+    min_gm: float = -1e9,
     min_om: float = -1e9,
     min_nm: float = -1e9,
 ) -> pd.DataFrame:
@@ -88,13 +88,13 @@ def compute(
     df["c5_per"] = df["per"].notna() & (df["per"] <= max_per)
     df["c6_pbr"] = df["pbr"].notna() & (df["pbr"] <= max_pbr)
 
-    # ── 이익률 (FY 최근) + 기준 7: GPM ≤ 상한 / 8·9: OPM·NPM ≥ 하한 ────────
+    # ── 이익률 (FY 최근) + 기준 7·8·9: 이익률 >= 하한 ─────────────────────
     rev = _num(df, f"revenue_{Y2}")
     gp = _num(df, f"gross_profit_{Y2}")
     df["gross_margin"] = np.where(rev > 0, gp / rev * 100, np.nan)
     df["op_margin"] = np.where(rev > 0, op_annual / rev * 100, np.nan)
     df["net_margin"] = np.where(rev > 0, ni_y2 / rev * 100, np.nan)
-    df["c7_gm"] = df["gross_margin"].notna() & (df["gross_margin"] <= max_gm)
+    df["c7_gm"] = df["gross_margin"].notna() & (df["gross_margin"] >= min_gm)
     df["c8_om"] = df["op_margin"].notna() & (df["op_margin"] >= min_om)
     df["c9_nm"] = df["net_margin"].notna() & (df["net_margin"] >= min_nm)
 
