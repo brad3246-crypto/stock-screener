@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import io
+import random
+import time
 
 import pandas as pd
 import requests
@@ -86,34 +88,47 @@ def _vals(s, k=3):
     return v + [None] * (k - len(v))
 
 
-def fetch_one(ticker: str) -> dict:
-    """한 종목의 yfinance 재무를 dict로. 실패해도 ticker는 포함."""
+def _is_rate_limited(err: Exception) -> bool:
+    s = str(err).lower()
+    return "too many requests" in s or "rate limit" in s or "429" in s
+
+
+def fetch_one(ticker: str, retries: int = 4, base_delay: float = 2.0) -> dict:
+    """한 종목의 yfinance 재무를 dict로.
+    429(레이트리밋)는 지수 백오프로 재시도(2·4·8·16초). 실패해도 ticker는 포함."""
     rec: dict = {"ticker": ticker}
-    try:
-        tk = yf.Ticker(ticker)
-        info = tk.info or {}
-        rec["marcap_native"] = info.get("marketCap")
-        rec["per"] = info.get("trailingPE")
-        rec["pbr"] = info.get("priceToBook")
-        rec["yf_sector"] = info.get("sector") or ""
-        rec["currency"] = info.get("financialCurrency") or info.get("currency") or ""
-        isa, bs, q = tk.income_stmt, tk.balance_sheet, tk.quarterly_income_stmt
-        op = _vals(_row(isa, OP_ROWS))   # [Y, Y-1, Y-2]
-        ni = _vals(_row(isa, NI_ROWS))
-        eq = _vals(_row(bs, EQ_ROWS))
-        rec["op_y0"], rec["op_y1"], rec["op_y2"] = op[2], op[1], op[0]  # [Y-2, Y-1, Y]
-        rec["ni_y0"], rec["ni_y1"], rec["ni_y2"] = ni[2], ni[1], ni[0]
-        rec["eq_y0"], rec["eq_y1"], rec["eq_y2"] = eq[2], eq[1], eq[0]
-        rec["rev_y2"] = _vals(_row(isa, ["Total Revenue", "Operating Revenue"]))[0]
-        rec["gp_y2"] = _vals(_row(isa, ["Gross Profit"]))[0]
-        qop = _row(q, ["Operating Income"])
-        qv = [float(x) if pd.notna(x) else None for x in list(qop.values)] if qop is not None else []
-        rec["op_q_cur"] = qv[0] if len(qv) > 0 else None       # 최신 분기
-        rec["op_q_prev"] = qv[4] if len(qv) > 4 else None      # 1년 전 동일 분기
-        rec["ok"] = True
-    except Exception as e:  # noqa: BLE001
-        rec["ok"] = False
-        rec["error"] = str(e)[:120]
+    time.sleep(random.uniform(0.1, 0.4))   # 동시 호출 폭주 완화용 소량 지터
+    for attempt in range(retries + 1):
+        try:
+            tk = yf.Ticker(ticker)
+            info = tk.info or {}
+            rec["marcap_native"] = info.get("marketCap")
+            rec["per"] = info.get("trailingPE")
+            rec["pbr"] = info.get("priceToBook")
+            rec["yf_sector"] = info.get("sector") or ""
+            rec["currency"] = info.get("financialCurrency") or info.get("currency") or ""
+            isa, bs, q = tk.income_stmt, tk.balance_sheet, tk.quarterly_income_stmt
+            op = _vals(_row(isa, OP_ROWS))   # [Y, Y-1, Y-2]
+            ni = _vals(_row(isa, NI_ROWS))
+            eq = _vals(_row(bs, EQ_ROWS))
+            rec["op_y0"], rec["op_y1"], rec["op_y2"] = op[2], op[1], op[0]  # [Y-2, Y-1, Y]
+            rec["ni_y0"], rec["ni_y1"], rec["ni_y2"] = ni[2], ni[1], ni[0]
+            rec["eq_y0"], rec["eq_y1"], rec["eq_y2"] = eq[2], eq[1], eq[0]
+            rec["rev_y2"] = _vals(_row(isa, ["Total Revenue", "Operating Revenue"]))[0]
+            rec["gp_y2"] = _vals(_row(isa, ["Gross Profit"]))[0]
+            qop = _row(q, ["Operating Income"])
+            qv = [float(x) if pd.notna(x) else None for x in list(qop.values)] if qop is not None else []
+            rec["op_q_cur"] = qv[0] if len(qv) > 0 else None       # 최신 분기
+            rec["op_q_prev"] = qv[4] if len(qv) > 4 else None      # 1년 전 동일 분기
+            rec["ok"] = True
+            return rec
+        except Exception as e:  # noqa: BLE001
+            if _is_rate_limited(e) and attempt < retries:
+                time.sleep(base_delay * (2 ** attempt) + random.uniform(0, 1.0))
+                continue
+            rec["ok"] = False
+            rec["error"] = str(e)[:120]
+            return rec
     return rec
 
 
