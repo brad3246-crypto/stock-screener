@@ -156,7 +156,7 @@ def render_global() -> None:
         min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5, key="g_roe")
         max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5, key="g_por")
         max_per = st.slider("PER 상한", 2.0, 50.0, config.DEFAULT_MAX_PER, 0.5, key="g_per")
-        max_pbr = st.slider("PBR 상한", 0.2, 10.0, config.DEFAULT_MAX_PBR, 0.1, key="g_pbr")
+        max_pbr = st.slider("PBR 상한", 0.2, 10.0, 5.0, 0.1, key="g_pbr")
         min_gm = st.slider("매출총이익률 하한 (%)", 0.0, 80.0, 0.0, 1.0, key="g_gm")
         min_om = st.slider("영업이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0, key="g_om")
         min_nm = st.slider("순이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0, key="g_nm")
