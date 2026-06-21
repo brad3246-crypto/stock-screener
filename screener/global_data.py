@@ -106,6 +106,7 @@ def fetch_one(ticker: str, retries: int = 4, base_delay: float = 2.0) -> dict:
             rec["per"] = info.get("trailingPE")
             rec["pbr"] = info.get("priceToBook")
             rec["yf_sector"] = info.get("sector") or ""
+            rec["yf_name"] = info.get("longName") or info.get("shortName") or ""
             rec["currency"] = info.get("financialCurrency") or info.get("currency") or ""
             isa, bs, q = tk.income_stmt, tk.balance_sheet, tk.quarterly_income_stmt
             op = _vals(_row(isa, OP_ROWS))   # [Y, Y-1, Y-2]
@@ -146,6 +147,12 @@ def to_frame(records: list, universe: pd.DataFrame, fx: dict) -> pd.DataFrame:
 
     # 섹터: 유니버스(S&P500) 우선, 없으면 yfinance
     df["sector"] = df["sector"].where(df["sector"].astype(bool), df.get("yf_sector", ""))
+
+    # 일본 종목명: 한자/가나 → 영어(yfinance longName)로 표기 (가독성)
+    if "yf_name" in df.columns:
+        en = df["yf_name"].fillna("")
+        jp_en = (df["market"] == "JP") & (en.str.len() > 0)
+        df.loc[jp_en, "name"] = en[jp_en]
 
     # 시총 → 원화(억)
     rate = df["market"].map({"US": fx.get("US"), "JP": fx.get("JP")})
