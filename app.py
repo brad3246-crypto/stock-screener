@@ -232,9 +232,9 @@ def render_global() -> None:
         data["ROE(최근)"] = view["roe_y2"]
     data["PER"] = view["per"]
     data["PBR"] = view["pbr"]
-    data["매출총이익률"] = view["gross_margin"]
-    data["영업이익률"] = view["op_margin"]
-    data["순이익률"] = view["net_margin"]
+    data["GPM"] = view["gross_margin"]
+    data["OPM"] = view["op_margin"]
+    data["NPM"] = view["net_margin"]
     if show_op:
         data["영익YoY(-1)"] = view["op_yoy_1"]
         data["영익YoY(최근)"] = view["op_yoy_2"]
@@ -242,7 +242,7 @@ def render_global() -> None:
     disp = pd.DataFrame(data)
 
     f1 = ["3년 ROE 평균", "POR 연간", POR_Q, "분기영익YoY",
-          "매출총이익률", "영업이익률", "순이익률"]
+          "GPM", "OPM", "NPM"]
     if show_roe:
         f1 += ["ROE(-2)", "ROE(-1)", "ROE(최근)"]
     if show_op:
@@ -292,13 +292,13 @@ with st.sidebar:
     with st.form("kr_filter_form", border=False):
         st.header("조절 필터")
         st.caption("값을 조정한 뒤 맨 아래 **적용**을 눌러야 반영됩니다.")
-        min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, config.DEFAULT_MIN_ROE, 0.5)
-        max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, config.DEFAULT_MAX_POR, 0.5)
-        max_per = st.slider("PER 상한", 2.0, 50.0, config.DEFAULT_MAX_PER, 0.5)
-        max_pbr = st.slider("PBR 상한", 0.2, 10.0, config.DEFAULT_MAX_PBR, 0.1)
-        min_gm = st.slider("매출총이익률 하한 (%)", 0.0, 80.0, 0.0, 1.0)
-        min_om = st.slider("영업이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0)
-        min_nm = st.slider("순이익률 하한 (%)", 0.0, 50.0, 0.0, 1.0)
+        min_roe = st.slider("ROE 하한 (%)", 0.0, 30.0, 15.0, 0.5)
+        max_por = st.slider("POR 상한 (영업이익 기준)", 2.0, 30.0, 10.0, 0.5)
+        max_per = st.slider("PER 상한", 2.0, 50.0, 15.0, 0.5)
+        max_pbr = st.slider("PBR 상한", 0.2, 10.0, 3.0, 0.1)
+        max_gm = st.slider("매출총이익률(GPM) 상한 (%)", 0.0, 100.0, 80.0, 1.0)
+        min_om = st.slider("영업이익률(OPM) 하한 (%)", 0.0, 50.0, 5.0, 1.0)
+        min_nm = st.slider("순이익률(NPM) 하한 (%)", 0.0, 50.0, 5.0, 1.0)
         st.divider()
         st.subheader("적용할 기준")
         c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True)
@@ -307,9 +307,9 @@ with st.sidebar:
         c4 = st.checkbox("④ POR ≤ 상한", value=True)
         c5 = st.checkbox("⑤ PER ≤ 상한", value=True)
         c6 = st.checkbox("⑥ PBR ≤ 상한", value=True)
-        c7 = st.checkbox("⑦ 매출총이익률 ≥ 하한", value=False)
-        c8 = st.checkbox("⑧ 영업이익률 ≥ 하한", value=False)
-        c9 = st.checkbox("⑨ 순이익률 ≥ 하한", value=False)
+        c7 = st.checkbox("⑦ 매출총이익률(GPM) ≤ 상한", value=False)
+        c8 = st.checkbox("⑧ 영업이익률(OPM) ≥ 하한", value=False)
+        c9 = st.checkbox("⑨ 순이익률(NPM) ≥ 하한", value=False)
         st.divider()
         markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
         min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
@@ -318,7 +318,7 @@ with st.sidebar:
 
 df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por,
                      max_per=max_per, max_pbr=max_pbr,
-                     min_gm=min_gm, min_om=min_om, min_nm=min_nm)
+                     max_gm=max_gm, min_om=min_om, min_nm=min_nm)
 df = df[df["market"].isin(markets)]
 if min_cap > 0:
     df = df[df["marcap"] >= min_cap * 1e8]
@@ -392,9 +392,9 @@ if show_roe_yearly:
     data[f"{yy[2]} ROE"] = view["roe_2025"]
 data["PER"] = per_col
 data["PBR"] = pbr_col
-data["매출총이익률"] = view["gross_margin"]
-data["영업이익률"] = view["op_margin"]
-data["순이익률"] = view["net_margin"]
+data["GPM"] = view["gross_margin"]
+data["OPM"] = view["op_margin"]
+data["NPM"] = view["net_margin"]
 if show_op_yearly:
     data[f"{yy[1]} YoY 영익"] = view["op_yoy_24"]
     data[f"{yy[2]} YoY 영익"] = view["op_yoy_25"]
@@ -403,7 +403,7 @@ disp = pd.DataFrame(data)
 
 # 천단위 쉼표 포맷
 f1 = ["3년 ROE 평균", "POR 연간", POR_Q, f"{qy} 1Q YoY 영익",
-      "매출총이익률", "영업이익률", "순이익률"]
+      "GPM", "OPM", "NPM"]
 if show_roe_yearly:
     f1 += [f"{yy[0]} ROE", f"{yy[1]} ROE", f"{yy[2]} ROE"]
 if show_op_yearly:
