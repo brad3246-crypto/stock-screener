@@ -127,6 +127,29 @@ def _load_global() -> pd.DataFrame:
     return pd.read_parquet(config.GLOBAL_PARQUET)
 
 
+# ── RS(상대강도) 캐시 ────────────────────────────────────────────────────
+RS_COLS = ["rs", "rs_3m", "rs_delta", "ret_3m", "ret_6m", "ret_12m"]
+
+
+@st.cache_data(ttl=900)
+def _load_rs(kind: str) -> pd.DataFrame:
+    p = config.RS_KR_PARQUET if kind == "kr" else config.RS_GLOBAL_PARQUET
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(p)
+
+
+def _merge_rs(df: pd.DataFrame, key: str, kind: str) -> pd.DataFrame:
+    """df에 RS 컬럼 병합(key=code/ticker). 캐시 없으면 NaN 컬럼만 추가."""
+    rs = _load_rs(kind)
+    if not rs.empty and key in rs.columns:
+        df = df.merge(rs[[key, *RS_COLS]], on=key, how="left")
+    else:
+        for c in RS_COLS:
+            df[c] = float("nan")
+    return df
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _g_price(ticker: str) -> list:
     try:
@@ -172,6 +195,11 @@ def render_global() -> None:
         c8 = st.checkbox("⑧ 영업이익률 ≥ 하한", value=False, key="g_c8")
         c9 = st.checkbox("⑨ 순이익률 ≥ 하한", value=False, key="g_c9")
         st.divider()
+        st.caption("RS(상대강도): 시장 내 1~99 · Δ3m은 최근 3개월 RS 변화")
+        rs_neglect = st.slider("RS 소외 상한 (이하)", 1, 99, config.DEFAULT_RS_NEGLECT_MAX, 1, key="g_rsn")
+        rs_improve = st.slider("최근 3개월 RS 개선폭 (이상)", 0, 50, config.DEFAULT_RS_IMPROVE_MIN, 1, key="g_rsi")
+        c10 = st.checkbox("⑩ 바닥반등 RS (소외 + 개선)", value=False, key="g_c10")
+        st.divider()
         mkts = st.multiselect("시장", ["US", "JP"], default=["US", "JP"],
                               format_func=lambda m: GMARKET_KR[m], key="g_mkt")
         min_cap = st.number_input("최소 시총 (억원)", 0, 100_000_000, 0, step=1000, key="g_cap")
@@ -182,6 +210,7 @@ def render_global() -> None:
             df[col] = float("nan")
     if min_cap > 0:
         df = df[df["marcap"] >= min_cap]
+    df = _merge_rs(df, "ticker", "global")
 
     roe_cols = ["roe_y0", "roe_y1", "roe_y2"]
     df["c3_roe"] = (df["roe_n"] == 3) & (df[roe_cols] >= min_roe).all(axis=1)
@@ -191,8 +220,10 @@ def render_global() -> None:
     df["c7_gm"] = df["gross_margin"].notna() & (df["gross_margin"] >= min_gm)
     df["c8_om"] = df["op_margin"].notna() & (df["op_margin"] >= min_om)
     df["c9_nm"] = df["net_margin"].notna() & (df["net_margin"] >= min_nm)
+    df["c10_rs"] = df["rs"].notna() & (df["rs"] <= rs_neglect) & (df["rs_delta"] >= rs_improve)
     flags = {"c1_uptrend": c1, "c2_qyoy": c2, "c3_roe": c3, "c4_por": c4,
-             "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9}
+             "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9,
+             "c10_rs": c10}
     active = [k for k, v in flags.items() if v]
     mask = pd.Series(True, index=df.index)
     for k in active:
@@ -230,6 +261,11 @@ def render_global() -> None:
         data["ROE(-2)"] = view["roe_y0"]
         data["ROE(-1)"] = view["roe_y1"]
         data["ROE(최근)"] = view["roe_y2"]
+    data["RS"] = view["rs"]
+    data["RS Δ3m"] = view["rs_delta"]
+    data["3M%"] = view["ret_3m"]
+    data["6M%"] = view["ret_6m"]
+    data["12M%"] = view["ret_12m"]
     data["PER"] = view["per"]
     data["PBR"] = view["pbr"]
     data["GPM"] = view["gross_margin"]
@@ -252,6 +288,10 @@ def render_global() -> None:
     colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
     colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
     colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
+    colcfg["RS"] = st.column_config.NumberColumn("RS", format="%d", help="상대강도 1~99 (시장 내)")
+    colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help="최근 3개월 RS 변화")
+    for _c in ("3M%", "6M%", "12M%"):
+        colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
     colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
     st.dataframe(disp, column_config=colcfg, use_container_width=True, height=560, hide_index=True)
 
@@ -311,6 +351,11 @@ with st.sidebar:
         c8 = st.checkbox("⑧ 영업이익률(OPM) ≥ 하한", value=False)
         c9 = st.checkbox("⑨ 순이익률(NPM) ≥ 하한", value=False)
         st.divider()
+        st.caption("RS(상대강도): 전 종목 대비 1~99 · Δ3m은 최근 3개월 RS 변화")
+        rs_neglect = st.slider("RS 소외 상한 (이하)", 1, 99, config.DEFAULT_RS_NEGLECT_MAX, 1)
+        rs_improve = st.slider("최근 3개월 RS 개선폭 (이상)", 0, 50, config.DEFAULT_RS_IMPROVE_MIN, 1)
+        c10 = st.checkbox("⑩ 바닥반등 RS (소외 + 개선)", value=False)
+        st.divider()
         markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
         min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
         show_all = st.checkbox("기준 일부만 충족도 표시(통과 개수순)", value=False)
@@ -319,13 +364,18 @@ with st.sidebar:
 df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por,
                      max_per=max_per, max_pbr=max_pbr,
                      min_gm=min_gm, min_om=min_om, min_nm=min_nm)
+df = _merge_rs(df, "code", "kr")
 df = df[df["market"].isin(markets)]
 if min_cap > 0:
     df = df[df["marcap"] >= min_cap * 1e8]
 
+# ⑩ 바닥반등 RS: 소외(RS ≤ 상한) + 최근 3개월 개선(Δ ≥ 개선폭)
+df["c10_rs"] = df["rs"].notna() & (df["rs"] <= rs_neglect) & (df["rs_delta"] >= rs_improve)
+
 # 선택된 기준만 AND 결합
 flags = {"c1_uptrend": c1, "c2_q1_yoy": c2, "c3_roe": c3, "c4_por": c4,
-         "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9}
+         "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9,
+         "c10_rs": c10}
 active = [k for k, v in flags.items() if v]
 if active:
     mask = pd.Series(True, index=df.index)
@@ -390,6 +440,11 @@ if show_roe_yearly:
     data[f"{yy[0]} ROE"] = view["roe_2023"]
     data[f"{yy[1]} ROE"] = view["roe_2024"]
     data[f"{yy[2]} ROE"] = view["roe_2025"]
+data["RS"] = view["rs"]
+data["RS Δ3m"] = view["rs_delta"]
+data["3M%"] = view["ret_3m"]
+data["6M%"] = view["ret_6m"]
+data["12M%"] = view["ret_12m"]
 data["PER"] = per_col
 data["PBR"] = pbr_col
 data["GPM"] = view["gross_margin"]
@@ -413,6 +468,10 @@ colcfg["PER"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
 colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
+colcfg["RS"] = st.column_config.NumberColumn("RS", format="%d", help="상대강도 1~99 (전 종목 대비)")
+colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help="최근 3개월 RS 변화")
+for _c in ("3M%", "6M%", "12M%"):
+    colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
 # 가로 스크롤해도 보이도록 왼쪽 식별 열(시장·종목코드·1년 주가·종목명) 고정
 colcfg["시장"] = st.column_config.TextColumn(pinned=True)
 colcfg["종목코드"] = st.column_config.TextColumn(pinned=True)

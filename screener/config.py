@@ -30,12 +30,18 @@ DEFAULT_MAX_POR = 10.0      # 영업이익 기준 PER(POR) 상한
 DEFAULT_MAX_PER = 15.0      # PER 상한
 DEFAULT_MAX_PBR = 2.0       # PBR 상한
 
+# ── RS(상대강도) 바닥반등 기본값 ────────────────────────────────────────────
+DEFAULT_RS_NEGLECT_MAX = 70   # '수급 소외' 판단 RS 상한(이하)
+DEFAULT_RS_IMPROVE_MIN = 10   # 최근 3개월 RS 개선폭 하한(이상, 백분위 포인트)
+
 # ── 경로 ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 FUNDAMENTALS_PARQUET = DATA_DIR / "fundamentals.parquet"
 UNIVERSE_PARQUET = DATA_DIR / "universe.parquet"
 GLOBAL_PARQUET = DATA_DIR / "global_fundamentals.parquet"   # 미국·일본
+RS_KR_PARQUET = DATA_DIR / "rs_kr.parquet"                  # 한국 RS(상대강도)
+RS_GLOBAL_PARQUET = DATA_DIR / "rs_global.parquet"          # 미국·일본 RS
 
 # ── DART 호출 ────────────────────────────────────────────────────────────
 FETCH_WORKERS = 8           # 동시 호출 스레드 수
