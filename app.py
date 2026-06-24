@@ -128,7 +128,7 @@ def _load_global() -> pd.DataFrame:
 
 
 # ── RS(상대강도) 캐시 ────────────────────────────────────────────────────
-RS_COLS = ["rs", "rs_3m", "rs_delta", "ret_3m", "ret_6m", "ret_12m"]
+RS_COLS = ["rs", "rs_3m", "rs_delta", "mdd", "ret_3m", "ret_6m", "ret_12m"]
 
 
 @st.cache_data(ttl=900)
@@ -143,9 +143,10 @@ def _merge_rs(df: pd.DataFrame, key: str, kind: str) -> pd.DataFrame:
     """df에 RS 컬럼 병합(key=code/ticker). 캐시 없으면 NaN 컬럼만 추가."""
     rs = _load_rs(kind)
     if not rs.empty and key in rs.columns:
-        df = df.merge(rs[[key, *RS_COLS]], on=key, how="left")
-    else:
-        for c in RS_COLS:
+        cols = [c for c in RS_COLS if c in rs.columns]   # 캐시에 없는 신규 컬럼 방어
+        df = df.merge(rs[[key, *cols]], on=key, how="left")
+    for c in RS_COLS:
+        if c not in df.columns:
             df[c] = float("nan")
     return df
 
@@ -263,6 +264,7 @@ def render_global() -> None:
         data["ROE(최근)"] = view["roe_y2"]
     data["RS"] = view["rs"]
     data["RS Δ3m"] = view["rs_delta"]
+    data["MDD"] = view["mdd"]
     data["3M%"] = view["ret_3m"]
     data["6M%"] = view["ret_6m"]
     data["12M%"] = view["ret_12m"]
@@ -290,6 +292,7 @@ def render_global() -> None:
     colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
     colcfg["RS"] = st.column_config.NumberColumn("RS", format="%d", help="상대강도 1~99 (시장 내)")
     colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help="최근 3개월 RS 변화")
+    colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
     for _c in ("3M%", "6M%", "12M%"):
         colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
     colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
@@ -442,6 +445,7 @@ if show_roe_yearly:
     data[f"{yy[2]} ROE"] = view["roe_2025"]
 data["RS"] = view["rs"]
 data["RS Δ3m"] = view["rs_delta"]
+data["MDD"] = view["mdd"]
 data["3M%"] = view["ret_3m"]
 data["6M%"] = view["ret_6m"]
 data["12M%"] = view["ret_12m"]
@@ -470,6 +474,7 @@ colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
 colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
 colcfg["RS"] = st.column_config.NumberColumn("RS", format="%d", help="상대강도 1~99 (전 종목 대비)")
 colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help="최근 3개월 RS 변화")
+colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
 for _c in ("3M%", "6M%", "12M%"):
     colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
 # 가로 스크롤해도 보이도록 왼쪽 식별 열(시장·종목코드·1년 주가·종목명) 고정

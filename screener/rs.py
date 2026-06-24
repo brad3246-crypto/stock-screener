@@ -54,12 +54,23 @@ def _returns(closes: np.ndarray):
     return r(63), r(126), r(252)
 
 
+def _mdd(closes: np.ndarray, window: int = 252):
+    """최근 window 거래일(기본 12개월) 최대낙폭(MDD, %). 음수로 반환."""
+    if len(closes) < 2:
+        return None
+    w = closes[-window:] if len(closes) > window else closes
+    peak = np.maximum.accumulate(w)
+    dd = w / peak - 1.0          # 고점 대비 하락률(≤0)
+    return float(dd.min() * 100)
+
+
 def _rec(key: str, market: str, closes) -> dict:
     arr = np.asarray([c for c in (closes if closes is not None else []) if c == c],
                      dtype=float)
     r3, r6, r12 = _returns(arr)
     return {"key": key, "market": market,
             "score": _score(arr, 0), "score_3m": _score(arr, 63),
+            "mdd": _mdd(arr),
             "ret_3m": r3, "ret_6m": r6, "ret_12m": r12}
 
 
@@ -118,7 +129,8 @@ def compute_kr(limit: int | None = None, workers: int = 8) -> pd.DataFrame:
         for r in tqdm(ex.map(one, codes), total=len(codes), desc="KR RS"):
             recs.append(r)
     df = _finalize(pd.DataFrame(recs)).rename(columns={"key": "code"})
-    return df[["code", "market", "rs", "rs_3m", "rs_delta", "ret_3m", "ret_6m", "ret_12m"]]
+    return df[["code", "market", "rs", "rs_3m", "rs_delta", "mdd",
+               "ret_3m", "ret_6m", "ret_12m"]]
 
 
 # ── 미국·일본 (yfinance 배치 다운로드) ────────────────────────────────────
@@ -159,7 +171,8 @@ def compute_global(limit: int | None = None, chunk: int = 25, pause: float = 1.5
         time.sleep(pause)
     recs = [_rec(t, markets[t], closes.get(t)) for t in tickers]
     df = _finalize(pd.DataFrame(recs)).rename(columns={"key": "ticker"})
-    return df[["ticker", "market", "rs", "rs_3m", "rs_delta", "ret_3m", "ret_6m", "ret_12m"]]
+    return df[["ticker", "market", "rs", "rs_3m", "rs_delta", "mdd",
+               "ret_3m", "ret_6m", "ret_12m"]]
 
 
 def run(do_kr: bool = True, do_global: bool = True,
