@@ -237,9 +237,10 @@ def render_global() -> None:
     m3.metric("기준일", dt.date.today().isoformat())
 
     st.caption("표의 열 제목을 클릭하면 정렬됩니다 ↑↓")
-    g1, g2, _ = st.columns([1.5, 1.5, 6], gap="small")
+    g1, g2, g3, _ = st.columns([1.5, 1.5, 1.5, 5], gap="small")
     show_roe = g1.checkbox("연도별 ROE 펼치기", value=False, key="g_roey")
     show_op = g2.checkbox("연간 영익 YoY 펼치기", value=False, key="g_opy")
+    show_rs_detail = g3.checkbox("RS 상세 펼치기", value=False, key="g_rsd")
 
     n_show = min(len(view), CHART_MAX_ROWS)
     with st.spinner("최근 1년 주가 불러오는 중..."):
@@ -263,11 +264,12 @@ def render_global() -> None:
         data["ROE(-1)"] = view["roe_y1"]
         data["ROE(최근)"] = view["roe_y2"]
     data["RS"] = view["rs"]
-    data["RS Δ3m"] = view["rs_delta"]
-    data["MDD"] = view["mdd"]
-    data["3M%"] = view["ret_3m"]
-    data["6M%"] = view["ret_6m"]
-    data["12M%"] = view["ret_12m"]
+    if show_rs_detail:
+        data["RS Δ3m"] = view["rs_delta"]
+        data["MDD"] = view["mdd"]
+        data["3M%"] = view["ret_3m"]
+        data["6M%"] = view["ret_6m"]
+        data["12M%"] = view["ret_12m"]
     data["PER"] = view["per"]
     data["PBR"] = view["pbr"]
     data["GPM"] = view["gross_margin"]
@@ -290,7 +292,10 @@ def render_global() -> None:
     colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
     colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
     colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
-    colcfg["RS"] = st.column_config.NumberColumn("RS", format="%d", help="상대강도 1~99 (시장 내)")
+    colcfg["RS"] = st.column_config.NumberColumn(
+        "RS", format="%d",
+        help="해당 시장(미국/일본) 내 주가의 상대강도 순위(1~99). 높을수록 강함 — "
+             "99=최상위, 50=중간, 1=최하위. 최근 3·6·9·12개월 수익률을 가중해 산출.")
     colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help="최근 3개월 RS 변화")
     colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
     for _c in ("3M%", "6M%", "12M%"):
@@ -405,9 +410,10 @@ m4.metric("기준일", dt.date.today().isoformat())
 view = view.reset_index(drop=True)
 
 st.caption("표의 열 제목을 클릭하면 그 값 기준으로 정렬됩니다 ↑↓")
-t1, t2, _ = st.columns([1.5, 1.5, 6], gap="small")
+t1, t2, t3, _ = st.columns([1.5, 1.5, 1.5, 5], gap="small")
 show_roe_yearly = t1.checkbox("연도별 ROE 펼치기", value=False)
 show_op_yearly = t2.checkbox("연간 영익 YoY 펼치기", value=False)
+show_rs_detail = t3.checkbox("RS 상세 펼치기", value=False)
 
 # 표시 상위 N행만 주가차트·업종 조회. PER/PBR은 필터와 일치하도록 계산값 사용.
 n_show = min(len(view), CHART_MAX_ROWS)
@@ -444,11 +450,12 @@ if show_roe_yearly:
     data[f"{yy[1]} ROE"] = view["roe_2024"]
     data[f"{yy[2]} ROE"] = view["roe_2025"]
 data["RS"] = view["rs"]
-data["RS Δ3m"] = view["rs_delta"]
-data["MDD"] = view["mdd"]
-data["3M%"] = view["ret_3m"]
-data["6M%"] = view["ret_6m"]
-data["12M%"] = view["ret_12m"]
+if show_rs_detail:
+    data["RS Δ3m"] = view["rs_delta"]
+    data["MDD"] = view["mdd"]
+    data["3M%"] = view["ret_3m"]
+    data["6M%"] = view["ret_6m"]
+    data["12M%"] = view["ret_12m"]
 data["PER"] = per_col
 data["PBR"] = pbr_col
 data["GPM"] = view["gross_margin"]
@@ -472,7 +479,10 @@ colcfg["PER"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
 colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
-colcfg["RS"] = st.column_config.NumberColumn("RS", format="%d", help="상대강도 1~99 (전 종목 대비)")
+colcfg["RS"] = st.column_config.NumberColumn(
+    "RS", format="%d",
+    help="시장 전체 종목 대비 주가의 상대강도 순위(1~99). 높을수록 강함 — "
+         "99=최상위, 50=중간, 1=최하위. 최근 3·6·9·12개월 수익률을 가중해 산출.")
 colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help="최근 3개월 RS 변화")
 colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
 for _c in ("3M%", "6M%", "12M%"):
