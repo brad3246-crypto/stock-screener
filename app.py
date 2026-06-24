@@ -264,9 +264,9 @@ def render_global() -> None:
         data["ROE(-1)"] = view["roe_y1"]
         data["ROE(최근)"] = view["roe_y2"]
     data["RS"] = view["rs"]
+    data["MDD"] = view["mdd"]
     if show_rs_detail:
         data["RS Δ3m"] = view["rs_delta"]
-        data["MDD"] = view["mdd"]
         data["3M%"] = view["ret_3m"]
         data["6M%"] = view["ret_6m"]
         data["12M%"] = view["ret_12m"]
@@ -450,9 +450,9 @@ if show_roe_yearly:
     data[f"{yy[1]} ROE"] = view["roe_2024"]
     data[f"{yy[2]} ROE"] = view["roe_2025"]
 data["RS"] = view["rs"]
+data["MDD"] = view["mdd"]
 if show_rs_detail:
     data["RS Δ3m"] = view["rs_delta"]
-    data["MDD"] = view["mdd"]
     data["3M%"] = view["ret_3m"]
     data["6M%"] = view["ret_6m"]
     data["12M%"] = view["ret_12m"]
