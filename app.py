@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 
@@ -125,6 +126,17 @@ def _load_global() -> pd.DataFrame:
     if not config.GLOBAL_PARQUET.exists():
         return pd.DataFrame()
     return pd.read_parquet(config.GLOBAL_PARQUET)
+
+
+# ── 결과 표 엑셀(.xlsx) 변환 ─────────────────────────────────────────────
+def _to_xlsx(df: pd.DataFrame) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="screener")
+    return buf.getvalue()
+
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 # ── RS(상대강도) 캐시 ────────────────────────────────────────────────────
@@ -304,10 +316,10 @@ def render_global() -> None:
     st.dataframe(disp, column_config=colcfg, use_container_width=True, height=560, hide_index=True)
 
     st.download_button(
-        "결과 CSV 다운로드",
-        disp.drop(columns=["1년 주가"]).to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"screener_global_{dt.date.today():%Y%m%d}.csv",
-        mime="text/csv",
+        "결과 엑셀 다운로드",
+        _to_xlsx(disp.drop(columns=["1년 주가"])),
+        file_name=f"screener_global_{dt.date.today():%Y%m%d}.xlsx",
+        mime=XLSX_MIME,
     )
 
 
@@ -501,10 +513,10 @@ st.dataframe(
 )
 
 st.download_button(
-    "결과 CSV 다운로드",
-    disp.drop(columns=["1년 주가"]).to_csv(index=False).encode("utf-8-sig"),
-    file_name=f"screener_{dt.date.today():%Y%m%d}.csv",
-    mime="text/csv",
+    "결과 엑셀 다운로드",
+    _to_xlsx(disp.drop(columns=["1년 주가"])),
+    file_name=f"screener_{dt.date.today():%Y%m%d}.xlsx",
+    mime=XLSX_MIME,
 )
 
 with st.expander("기준 정의 / 주의사항"):
