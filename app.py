@@ -468,7 +468,8 @@ if show_rs_detail:
     data["3M%"] = view["ret_3m"]
     data["6M%"] = view["ret_6m"]
     data["12M%"] = view["ret_12m"]
-data["PER"] = per_col
+data["PER 연간"] = view["per_annual"]
+data["PER(1Qx4)"] = view["per_q1x4"]
 data["PBR"] = pbr_col
 data["GPM"] = view["gross_margin"]
 data["OPM"] = view["op_margin"]
@@ -487,7 +488,8 @@ if show_roe_yearly:
 if show_op_yearly:
     f1 += [f"{yy[1]} YoY 영익", f"{yy[2]} YoY 영익"]
 colcfg = {c: st.column_config.NumberColumn(format="%,.1f") for c in f1}
-colcfg["PER"] = st.column_config.NumberColumn(format="%,.2f")
+colcfg["PER 연간"] = st.column_config.NumberColumn(format="%,.2f")
+colcfg["PER(1Qx4)"] = st.column_config.NumberColumn("PER\n(1Qx4)", format="%,.2f")
 colcfg["PBR"] = st.column_config.NumberColumn(format="%,.2f")
 colcfg["시총(억)"] = st.column_config.NumberColumn(format="%,d")
 colcfg[POR_Q] = st.column_config.NumberColumn("POR\n(1Q x 4)", format="%,.1f")
@@ -526,6 +528,7 @@ with st.expander("기준 정의 / 주의사항"):
 - **기준②** {config.QUARTER_YEAR} 1분기 영업이익 > {config.QUARTER_YEAR-1} 1분기 영업이익
 - **기준③** {config.YEARS[0]}·{config.YEARS[1]}·{config.YEARS[2]} ROE 모두 ≥ 하한 (ROE = 당기순이익 ÷ 자본총계, 기말)
 - **기준④** `시총 ÷ FY{config.ANNUAL_YEAR} 영업이익` **또는** `시총 ÷ (1분기 영업이익×4)` 중 하나라도 ≤ 상한
+- **기준⑤** PER도 동일 — `시총 ÷ FY{config.ANNUAL_YEAR} 순이익` **또는** `시총 ÷ (1분기 순이익×4)` 중 하나라도 ≤ 상한
 - POR은 일반 PER(순이익 기준)이 아니라 **영업이익 기준** 입니다(사용자 정의).
 - 연결(CFS) 우선, 없으면 별도(OFS). 적자/결손 기업은 ROE·POR이 NaN 처리되어 자동 제외됩니다.
 - 시총은 실시간(FinanceDataReader), 재무는 캐시. 재무 갱신은 `python -m screener.fetch`.
