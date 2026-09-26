@@ -58,3 +58,5 @@ screener/
   fetch.py              수집 파이프라인(병렬·부분저장)
 data/                   캐시 parquet (gitignore)
 ```
+
+마지막 업데이트: 2026-09-26
