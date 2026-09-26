@@ -3,7 +3,12 @@ pandas>=2.3,<3
 pyarrow>=20
 finance-datareader>=0.9.20
 OpenDartReader>=0.3.2
+pykrx>=1.2.8
 yfinance>=0.2
+# KRX 공매도 자동 수집(실브라우저)용 — screener.short_auto
+selenium>=4.20
+undetected-chromedriver>=3.5
+setuptools  # Python 3.12+ 에서 undetected-chromedriver의 distutils 의존성 대체
 requests
 lxml
 beautifulsoup4

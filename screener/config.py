@@ -42,6 +42,14 @@ UNIVERSE_PARQUET = DATA_DIR / "universe.parquet"
 GLOBAL_PARQUET = DATA_DIR / "global_fundamentals.parquet"   # 미국·일본
 RS_KR_PARQUET = DATA_DIR / "rs_kr.parquet"                  # 한국 RS(상대강도)
 RS_GLOBAL_PARQUET = DATA_DIR / "rs_global.parquet"          # 미국·일본 RS
+SHORT_KR_PARQUET = DATA_DIR / "short_kr.parquet"            # 한국 공매도·대차 수급
+CREDIT_KR_PARQUET = DATA_DIR / "credit_kr.parquet"          # 한국 신용융자잔고(코스피·코스닥)
+
+# ── 공매도·대차 수급 필터 기본 상한(앱 슬라이더로 조정) ────────────────────
+DEFAULT_MAX_SHORT_BAL = 2.0    # 공매도 잔고비중 상한(%)
+DEFAULT_MAX_SHORT_VOL = 10.0   # 공매도 거래비중 상한(%)
+DEFAULT_MAX_LOAN_BAL = 5.0     # 대차잔고비율 상한(%)
+DEFAULT_MAX_DTC = 10.0         # 상환소요일수(Days to Cover) 상한(일)
 
 # ── DART 호출 ────────────────────────────────────────────────────────────
 FETCH_WORKERS = 8           # 동시 호출 스레드 수

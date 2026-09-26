@@ -163,6 +163,30 @@ def _merge_rs(df: pd.DataFrame, key: str, kind: str) -> pd.DataFrame:
     return df
 
 
+# ── 공매도·대차 수급 캐시 ────────────────────────────────────────────────
+SHORT_COLS = ["short_bal_ratio", "short_bal_qty", "short_vol_ratio",
+              "avg_vol_20d", "days_to_cover", "loan_bal_qty", "loan_bal_ratio"]
+
+
+@st.cache_data(ttl=900)
+def _load_short() -> pd.DataFrame:
+    if not config.SHORT_KR_PARQUET.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(config.SHORT_KR_PARQUET)
+
+
+def _merge_short(df: pd.DataFrame) -> pd.DataFrame:
+    """df(code)에 공매도·대차 컬럼 병합. 캐시 없으면 NaN 컬럼만 추가."""
+    sh = _load_short()
+    if not sh.empty and "code" in sh.columns:
+        cols = [c for c in SHORT_COLS if c in sh.columns]
+        df = df.merge(sh[["code", *cols]], on="code", how="left")
+    for c in SHORT_COLS:
+        if c not in df.columns:
+            df[c] = float("nan")
+    return df
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _g_price(ticker: str) -> list:
     try:
@@ -313,7 +337,7 @@ def render_global() -> None:
     for _c in ("3M%", "6M%", "12M%"):
         colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
     colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
-    st.dataframe(disp, column_config=colcfg, use_container_width=True, height=560, hide_index=True)
+    st.dataframe(disp, column_config=colcfg, width="stretch", height=560, hide_index=True)
 
     st.download_button(
         "결과 엑셀 다운로드",
@@ -323,11 +347,378 @@ def render_global() -> None:
     )
 
 
-st.title("ADR 바닥 수급 소외 종목 필터")
+# ── 국내 액티브 ETF 추적 (FDR 유니버스 + 네이버 보유종목) ──────────────────
+# '한국 주식형 · 진짜 액티브'만 남긴다:
+#  ① 채권/MMF/금리/TDF/커버드콜/금 등 非주식 제외
+#  ② 해외·외국기업 밸류체인 제외(→ 한국 주식만 운용하는 펀드)
+#  ③ 코스피200·코스닥 등 광의 지수추종(인덱스 허깅) 제외 → 액티브 성격만
+_ETF_NONEQ = ["머니마켓", "MMF", "CD", "KOFR", "금리", "채권", "국채", "국고",
+              "회사채", "금융채", "특수채", "은행채", "전단채", "국공채", "종합채",
+              "단기채", "중기종합", "장기종합", "변동금리", "TDF", "만기", "존속",
+              "스트립", "커버드콜", "금액티브", "골드", "원유", "상품"]
+_ETF_FOREIGN = ["미국", "美", "글로벌", "나스닥", "S&P", "다우", "차이나", "중국",
+                "일본", "인도", "베트남", "유럽", "선진", "신흥", "아시아", "exChina",
+                "월드", "홍콩", "대만", "멕시코", "브라질", "유로", "테슬라", "엔비디아",
+                "구글", "브로드컴", "팔란티어", "마이크로소프트", "샤오미", "BYD",
+                "애플", "아마존", "메타", "알파벳", "우주"]
+_ETF_INDEX = ["200", "코스피", "코스닥", "KRX", "대표", "밸류업"]
+
+# 테마 분류(위에서부터 먼저 매칭). 국내 섹터 성장테마 위주.
+FUND_THEMES = [
+    ("반도체", ["반도체", "비메모리", "하이닉스밸류", "소부장"]),
+    ("2차전지", ["2차전지", "이차전지", "배터리"]),
+    ("바이오·헬스", ["바이오", "헬스", "제약"]),
+    ("자동차·조선", ["자동차", "조선", "중공업"]),
+    ("방산", ["방산", "항공"]),
+    ("로봇·AI·테크", ["로봇", "AI", "인공지능", "테크", "기술", "혁신성장",
+                     "플랫폼", "인터넷", "게임", "대장장이"]),
+    ("신재생·친환경", ["신재생", "친환경", "태양광", "수소"]),
+    ("소비재", ["소비재", "필수소비", "음식료", "화장품", "엔터", "미디어"]),
+    ("리츠·부동산", ["리츠", "부동산", "인프라"]),
+    ("금융·배당", ["금융", "은행", "배당", "고배당", "ESG", "전략산업"]),
+]
+# 기본 표시 테마(금융·배당/기타 제외 = 섹터 성장주 위주)
+FUND_DEFAULT_THEMES = ["반도체", "2차전지", "바이오·헬스", "로봇·AI·테크",
+                       "신재생·친환경", "자동차·조선", "방산", "소비재", "리츠·부동산"]
+
+
+def _fund_theme(name: str) -> str:
+    for t, ks in FUND_THEMES:
+        if any(k in name for k in ks):
+            return t
+    return "기타"
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _active_etf_universe() -> pd.DataFrame:
+    """국내 상장 · 한국주식형 · 비인덱스 액티브 ETF (순자산순) + 테마."""
+    etf = fdr.StockListing("ETF/KR").rename(
+        columns={"Symbol": "code", "Name": "name", "MarCap": "marcap"})
+    etf["marcap"] = pd.to_numeric(etf["marcap"], errors="coerce")
+    df = etf[etf["name"].str.contains("액티브", na=False)].dropna(subset=["marcap"]).copy()
+    bad = _ETF_NONEQ + _ETF_FOREIGN + _ETF_INDEX
+    df = df[~df["name"].apply(lambda n: any(b in n for b in bad))]
+    df["theme"] = df["name"].apply(_fund_theme)
+    return (df.sort_values("marcap", ascending=False)
+            [["code", "name", "marcap", "theme"]].reset_index(drop=True))
+
+
+def _parse_krw_eok(s) -> float:
+    """'1조 2,079억' → 12079(억). 실패 시 NaN."""
+    if not s:
+        return float("nan")
+    t = str(s).replace(",", "").replace(" ", "")
+    jo = re.search(r"([\d.]+)조", t)
+    eok = re.search(r"([\d.]+)억", t)
+    val = (float(jo.group(1)) * 10000 if jo else 0.0) + (float(eok.group(1)) if eok else 0.0)
+    return val or float("nan")
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _naver_etf(code: str) -> dict:
+    """네이버 ETF 분석: 운용사·순자산·총보수·보유 상위10. 실패 시 빈 dict."""
+    try:
+        d = requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/etfAnalysis",
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/"},
+            timeout=8,
+        ).json()
+    except Exception:
+        return {}
+    holds = []
+    for h in d.get("etfTop10MajorConstituentAssets") or []:
+        try:
+            w = float(str(h.get("etfWeight")).replace("%", "").replace(",", ""))
+        except (TypeError, ValueError):
+            w = None
+        holds.append({"code": str(h.get("itemCode") or ""),
+                      "name": h.get("itemName") or "", "weight": w})
+    return {"issuer": d.get("issuerName") or "",
+            "nav_eok": _parse_krw_eok(d.get("totalNav")),
+            "fee": d.get("totalFee"), "holdings": holds}
+
+
+def _naver_etfs(codes: list) -> list:
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(_naver_etf, codes))
+
+
+def render_funds() -> None:
+    st.caption("국내 상장 **한국 주식형 액티브 ETF**(지수추종 제외)를 순자산 규모순으로 추적하고 "
+               "각 펀드의 보유 상위 종목을 본다. 데이터: FinanceDataReader + 네이버.")
+    uni = _active_etf_universe()
+    if uni.empty:
+        st.error("액티브 ETF 유니버스를 불러오지 못했습니다(FDR).")
+        return
+    themes_avail = [t for t, _ in FUND_THEMES if t in set(uni["theme"])]
+    default_themes = [t for t in FUND_DEFAULT_THEMES if t in themes_avail]
+    with st.sidebar:
+        st.header("설정")
+        topn = st.slider("추적할 펀드 수 (순자산 상위)", 5, 30, 10, 1, key="f_n")
+        sel_themes = st.multiselect("테마 (섹터)", themes_avail, default=default_themes,
+                                    key="f_theme")
+        agg_n = st.slider("합산 최다보유 종목 표시 수", 10, 40, 20, 5, key="f_agg")
+
+    pool = uni[uni["theme"].isin(sel_themes)] if sel_themes else uni
+    if pool.empty:
+        st.warning("선택한 테마에 해당하는 펀드가 없습니다. 왼쪽에서 테마를 더 선택하세요.")
+        return
+    cand = pool.head(topn).copy()
+    with st.spinner("네이버에서 보유종목·순자산 불러오는 중..."):
+        infos = _naver_etfs(cand["code"].tolist())
+    cand["issuer"] = [i.get("issuer", "") for i in infos]
+    cand["nav_eok"] = [i.get("nav_eok") for i in infos]
+    cand["fee"] = [i.get("fee") for i in infos]
+    cand["_holds"] = [i.get("holdings", []) for i in infos]
+    # 순자산(네이버)이 있으면 그 값으로 재정렬, 없으면 FDR 시총으로 대체
+    cand["size_eok"] = pd.to_numeric(cand["nav_eok"], errors="coerce").fillna(cand["marcap"])
+    cand = cand.sort_values("size_eok", ascending=False).reset_index(drop=True)
+    cand.index = cand.index + 1
+
+    m1, m2 = st.columns(2)
+    m1.metric("추적 펀드 수", f"{len(cand)}")
+    m2.metric("기준일", dt.date.today().isoformat())
+
+    st.subheader(f"① 한국주식형 액티브 ETF 순자산 상위 {len(cand)}")
+    rank = pd.DataFrame({
+        "펀드명": cand["name"], "테마": cand["theme"], "코드": cand["code"],
+        "운용사": cand["issuer"], "순자산(억)": cand["size_eok"].round(0),
+        "총보수(%)": pd.to_numeric(cand["fee"], errors="coerce"),
+    })
+    st.dataframe(rank, width="stretch", height=460, column_config={
+        "순자산(억)": st.column_config.NumberColumn(format="%,d"),
+        "총보수(%)": st.column_config.NumberColumn(format="%.3f")})
+
+    st.subheader(f"② 상위 {len(cand)}개 펀드가 가장 많이 담은 종목 (보유 상위10 합산)")
+    rows = [{"code": h["code"], "name": h["name"], "weight": h["weight"] or 0.0, "fund": r["name"]}
+            for _, r in cand.iterrows() for h in r["_holds"] if h.get("code")]
+    if rows:
+        hdf = pd.DataFrame(rows)
+        agg = (hdf.groupby(["code", "name"])
+               .agg(보유펀드수=("fund", "nunique"), 합산비중=("weight", "sum"),
+                    평균비중=("weight", "mean"))
+               .reset_index()
+               .sort_values(["보유펀드수", "합산비중"], ascending=False).head(agg_n))
+        st.dataframe(pd.DataFrame({
+            "종목": agg["name"], "코드": agg["code"], "보유펀드수": agg["보유펀드수"],
+            "합산비중(%)": agg["합산비중"].round(2), "평균비중(%)": agg["평균비중"].round(2),
+        }), width="stretch", hide_index=True, column_config={
+            c: st.column_config.NumberColumn(format="%.2f") for c in ("합산비중(%)", "평균비중(%)")})
+        st.caption("‘보유펀드수’ = 이 종목을 상위10에 담은 펀드 수. 여러 액티브 펀드가 공통으로 베팅하는 종목일수록 위로.")
+    else:
+        st.info("보유종목 데이터를 불러오지 못했습니다(네이버 응답 없음).")
+
+    st.subheader("③ 펀드별 보유 상위 10종목")
+    for _, r in cand.iterrows():
+        with st.expander(f"{r.name}. {r['name']}  ·  [{r['theme']}]  ·  {r['issuer']}  ·  순자산 {r['size_eok']:,.0f}억"):
+            h = r["_holds"]
+            if not h:
+                st.caption("보유종목 없음 / 로드 실패")
+                continue
+            st.dataframe(pd.DataFrame([
+                {"순위": i + 1, "종목": x["name"], "코드": x["code"], "비중(%)": x["weight"]}
+                for i, x in enumerate(h)
+            ]), width="stretch", hide_index=True, column_config={
+                "비중(%)": st.column_config.NumberColumn(format="%.2f")})
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _mdd_index(code: str, start: str) -> pd.DataFrame:
+    from screener import mdd
+    return mdd.index_series(code, start)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _mdd_credit() -> pd.DataFrame:
+    from screener import mdd
+    return mdd.load_credit()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fng_bond(start: str) -> pd.Series:
+    from screener import fng
+    return fng.load_bond(start)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fng_series(code: str, start: str, bond_start: str) -> pd.DataFrame:
+    from screener import fng
+    return fng.fear_greed(code, start, bond=_fng_bond(bond_start))
+
+
+_PERIODS = {"3개월": 91, "6개월": 182, "12개월": 365, "2년": 730, "3년": 1095}
+
+
+def _period_start(label: str) -> str:
+    days = _PERIODS.get(label, 365)
+    return (dt.date.today() - dt.timedelta(days=days)).isoformat()
+
+
+def render_market_fng() -> None:
+    """지수 Fear & Greed Index + EMA20 + 오실레이터."""
+    import altair as alt
+    from screener import fng
+
+    period = st.session_state.get("mdd_period", "12개월")
+    start = _period_start(period)
+    hc = st.columns([5, 3])
+    hc[0].subheader("😱 공포·탐욕 지수 (Fear & Greed)")
+    name = hc[1].radio("지수", ["코스닥", "코스피"], horizontal=True,
+                       key="fng_idx", label_visibility="collapsed")
+
+    df = _fng_series(fng.INDEX_CODES[name], start, fng.default_start(2))
+    if df.empty:
+        st.warning(f"{name} F&G 계산 실패 (데이터 조회 문제)")
+        st.divider()
+        return
+
+    last = df.iloc[-1]
+    m = st.columns(4)
+    m[0].metric(f"{name} F&G", f"{last['fng']:.1f}", fng.label(last["fng"]))
+    m[1].metric("EMA20", f"{last['ema20']:.1f}")
+    m[2].metric("오실레이터", f"{last['osc']:.4f}")
+    m[3].metric(f"{name} 지수", f"{last['close']:,.0f}")
+
+    base = df.reset_index()
+    s100 = alt.Scale(domain=[0, 100])
+    # 왼쪽 축(0~100): F&G·EMA20·기준선(25/75) — 하나의 축을 공유
+    fg = alt.Chart(base).mark_line(color="#4472C4").encode(
+        x=alt.X("date:T", title=None),
+        y=alt.Y("fng:Q", title="Fear & Greed", scale=s100))
+    ema = alt.Chart(base).mark_line(color="#ED7D31").encode(
+        x="date:T", y=alt.Y("ema20:Q", title=None, scale=s100))
+    bands = alt.Chart(pd.DataFrame({"lvl": [25, 75]})).mark_rule(
+        color="#CCCCCC", strokeDash=[4, 4]).encode(
+        y=alt.Y("lvl:Q", scale=s100, axis=None))
+    left = alt.layer(bands, fg, ema)
+    # 오른쪽 축: 지수
+    idx = alt.Chart(base).mark_line(color="#B0B0B0", opacity=0.7).encode(
+        x="date:T",
+        y=alt.Y("close:Q", title=f"{name} 지수", scale=alt.Scale(zero=False)))
+    chart = alt.layer(left, idx).resolve_scale(y="independent").properties(
+        height=340, padding={"right": 12})
+    st.altair_chart(chart, width="stretch")
+
+    # 오실레이터 (별도, 0선 숨김축)
+    zero = alt.Chart(pd.DataFrame({"lvl": [0]})).mark_rule(color="#888").encode(
+        y=alt.Y("lvl:Q", axis=None))
+    osc = alt.Chart(base).mark_area(opacity=0.5).encode(
+        x=alt.X("date:T", title=None),
+        y=alt.Y("osc:Q", title="Oscillator"),
+        color=alt.condition("datum.osc >= 0", alt.value("#70AD47"), alt.value("#C00000")))
+    st.altair_chart(alt.layer(osc, zero).properties(height=120), width="stretch")
+
+    st.caption("파랑=F&G · 주황=EMA20 · 회색=지수 · 하단=오실레이터(EMA12−EMA26). "
+               "5개 요소(모멘텀·RSI·52주위치·변동성·안전자산) 평균. "
+               "0=극단적 공포, 100=극단적 탐욕.")
+    st.divider()
+
+
+def render_market_mdd() -> None:
+    """메인 상단: 코스피·코스닥 지수 MDD(+신용잔고 있으면 함께)."""
+    import altair as alt
+    from screener import mdd
+
+    period = st.session_state.get("mdd_period", "12개월")
+    start = _period_start(period)
+    credit = _mdd_credit()
+
+    def _panel(name: str):
+        df = _mdd_index(mdd.INDEX_CODES[name], start)
+        if df.empty:
+            st.warning(f"{name} 지수 조회 실패 (네트워크/FDR)")
+            return
+        cur, trough = df["mdd"].iloc[-1], df["mdd"].min()
+        c1, c2 = st.columns(2)
+        c1.metric(f"{name} 현재 MDD", f"{cur*100:.1f}%")
+        c2.metric("기간 최저(MDD)", f"{trough*100:.1f}%")
+
+        base = df.reset_index()
+        line = alt.Chart(base).mark_line(color="#4472C4").encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y("value:Q", title=f"{name}", scale=alt.Scale(zero=False)),
+        )
+        area = alt.Chart(base).mark_area(color="#ED7D31", opacity=0.35).encode(
+            x="date:T",
+            y=alt.Y("mdd:Q", title="MDD", axis=alt.Axis(format="%")),
+        )
+        st.altair_chart(alt.layer(line, area).resolve_scale(y="independent"),
+                        width="stretch")
+
+        # 신용융자잔고 MDD 겹쳐보기 (있을 때만)
+        col = {"코스피": "kospi", "코스닥": "kosdaq"}[name]
+        if not credit.empty and col in credit.columns:
+            cs = credit[col].dropna()
+            cs = cs[cs.index >= pd.Timestamp(start)]
+            if len(cs) > 1:
+                cd = pd.DataFrame({"date": cs.index, "mdd": mdd.running_mdd(cs).values})
+                cm = cd["mdd"].iloc[-1]
+                st.caption(f"신용융자잔고 현재 MDD **{cm*100:.1f}%** · 기간최저 {cd['mdd'].min()*100:.1f}%")
+                st.altair_chart(
+                    alt.Chart(cd).mark_line(color="#C00000").encode(
+                        x=alt.X("date:T", title=None),
+                        y=alt.Y("mdd:Q", title="신용잔고 MDD", axis=alt.Axis(format="%")),
+                    ), width="stretch")
+
+    hcol = st.columns([5, 2, 2])
+    hcol[0].subheader("📉 시장 낙폭(MDD) 모니터")
+    if hcol[1].button("새로고침", key="mdd_refresh", width="stretch",
+                      help="지수·신용잔고 데이터를 다시 불러옵니다(캐시 무시)"):
+        _mdd_index.clear()
+        _mdd_credit.clear()
+        _fng_series.clear()
+        _fng_bond.clear()
+        st.rerun()
+    _opts = list(_PERIODS)
+    st.session_state["mdd_period"] = hcol[2].selectbox(
+        "기간", _opts, index=_opts.index(period), key="mdd_period_sel",
+        label_visibility="collapsed")
+    st.caption("Running MDD = (당일 − 기간내 최고) ÷ 기간내 최고. 값 항상 ≤ 0.")
+    k1, k2 = st.columns(2)
+    with k1:
+        _panel("코스피")
+    with k2:
+        _panel("코스닥")
+
+    if credit.empty:
+        with st.expander("💳 신용융자잔고 MDD 추가하기 (KRX CSV 업로드)"):
+            st.markdown(
+                "지수 MDD는 자동입니다. **신용융자잔고**는 KRX 데이터라 봇차단으로 자동조회가 안 됩니다.\n\n"
+                "**①** [KRX 신용거래융자 잔고 ↗](https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020602) "
+                "→ [조회] → 우측 상단 **CSV 다운로드** → **②** 아래에 드래그\n\n"
+                "*(코스피·코스닥 컬럼이 있는 CSV면 자동 인식. 날짜/코스피/코스닥 형태)*")
+            ups = st.file_uploader("신용융자잔고 CSV", type=["csv"],
+                                   accept_multiple_files=True, key="credit_uploader")
+            if ups and st.button("신용잔고 적용", key="credit_apply"):
+                from screener import mdd as _m
+                cdf = _m.build_credit_from_csv(ups)
+                if cdf.empty:
+                    st.error("코스피/코스닥 컬럼을 못 찾았습니다. 파일 형식을 확인하세요.")
+                else:
+                    config.DATA_DIR.mkdir(exist_ok=True)
+                    cdf.to_parquet(config.CREDIT_KR_PARQUET, index=False)
+                    st.success(f"신용잔고 {len(cdf)}일치 반영 완료!")
+                    st.rerun()
+    st.divider()
+
+
 _market_group = st.sidebar.radio(
-    "🌐 시장 구분", ["🇰🇷 한국 (KOSPI·KOSDAQ)", "🇺🇸 미국 · 🇯🇵 일본"], index=0
+    "🌐 시장 구분",
+    ["🇰🇷 한국 (KOSPI·KOSDAQ)", "🇺🇸 미국 · 🇯🇵 일본",
+     "🏦 국내 액티브 ETF", "📊 시장 모니터링"], index=0
 )
 st.sidebar.divider()
+if _market_group.startswith("📊"):
+    st.title("시장 모니터링")
+    st.caption("코스피·코스닥 낙폭(MDD)과 공포·탐욕 지수. 사이드바 대신 여기서 시장 전체 온도를 본다.")
+    render_market_mdd()
+    render_market_fng()
+    st.stop()
+if _market_group.startswith("🏦"):
+    st.title("국내 액티브 ETF 추적")
+    render_funds()
+    st.stop()
+st.title("ADR 바닥 수급 소외 종목 필터")
 if _market_group.startswith("🇺🇸"):
     render_global()
     st.stop()
@@ -346,6 +737,50 @@ if fund.empty:
     st.stop()
 
 universe = _load_universe()
+
+# ── 공매도 데이터 넣기 (KRX는 봇차단이라 CSV를 직접 받아 업로드) ───────────
+_has_short = config.SHORT_KR_PARQUET.exists()
+with st.expander("🩳 공매도·대차 데이터 넣기 " + ("(현재 있음 · 새로 올리면 교체)" if _has_short else "(현재 없음 → 공매도 컬럼 비어 있음)"),
+                 expanded=not _has_short):
+    st.markdown("**방법 A · 자동 수집** — 버튼을 누르면 크롬이 잠깐 떴다 닫히며 KRX에서 바로 가져옵니다. "
+                "(KRX 봇차단에 막히면 실패할 수 있음 → 그땐 방법 B)")
+    if st.button("🤖 자동 수집 시도 (크롬 창 잠깐 뜸)", type="primary", key="short_auto_btn"):
+        import subprocess
+        import sys
+        with st.spinner("크롬을 띄워 KRX 공매도를 가져오는 중... (10~30초, 창이 떴다 닫힙니다)"):
+            try:
+                _r = subprocess.run([sys.executable, "-m", "screener.short_auto"],
+                                    cwd=str(config.ROOT), capture_output=True,
+                                    text=True, timeout=150)
+                _out = (_r.stdout or "") + (_r.stderr or "")
+            except subprocess.TimeoutExpired:
+                _out = "TIMEOUT: 크롬 응답이 없어 중단"
+        if config.SHORT_KR_PARQUET.exists() and "저장" in _out:
+            _load_short.clear()
+            st.success("자동 수집 성공! 표를 갱신합니다.")
+            st.rerun()
+        else:
+            st.error("자동 수집 실패(KRX 차단 가능성). 아래 방법 B(CSV 업로드)를 쓰세요.")
+            with st.expander("자동 수집 로그"):
+                st.code((_out or "(출력 없음)")[-2500:])
+
+    st.divider()
+    st.markdown("**방법 B · 수동 업로드** — 자동이 막힐 때. "
+                "**①** [KRX 공매도 잔고 ↗](https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC02030301) "
+                "→ [조회] → 표 우측 위 **다운로드 아이콘 → CSV** → **②** 아래에 드래그")
+    _ups = st.file_uploader("KRX 공매도 CSV (여러 개 가능, 파일명에 잔고/거래/대차)", type=["csv"],
+                            accept_multiple_files=True, key="short_uploader")
+    if _ups and st.button("업로드 적용", key="short_apply"):
+        from screener.short import build_from_uploads
+        try:
+            _sdf = build_from_uploads(_ups)
+            config.DATA_DIR.mkdir(exist_ok=True)
+            _sdf.to_parquet(config.SHORT_KR_PARQUET, index=False)
+            _load_short.clear()
+            st.success(f"공매도 {len(_sdf)}종목 반영 완료! 표가 갱신됩니다.")
+            st.rerun()
+        except Exception as e:  # noqa: BLE001
+            st.error(f"처리 실패: {e}")
 
 # ── 사이드바: 필터 (적용 버튼을 눌러야 반영) ─────────────────────────────
 with st.sidebar:
@@ -376,15 +811,26 @@ with st.sidebar:
         rs_improve = st.slider("최근 3개월 RS 개선폭 (이상)", 0, 50, config.DEFAULT_RS_IMPROVE_MIN, 1)
         c10 = st.checkbox("⑩ 바닥반등 RS (소외 + 개선)", value=False)
         st.divider()
+        st.caption("공매도·대차 수급 (데이터 없으면 자동 통과) · KRX CSV를 `data/krx_csv/`에 넣고 `import_short_csv.bat` 실행")
+        max_short_bal = st.slider("공매도 잔고비중 상한 (%)", 0.0, 20.0, config.DEFAULT_MAX_SHORT_BAL, 0.1)
+        max_short_vol = st.slider("공매도 거래비중 상한 (%)", 0.0, 50.0, config.DEFAULT_MAX_SHORT_VOL, 0.5)
+        max_loan_bal = st.slider("대차잔고비율 상한 (%)", 0.0, 30.0, config.DEFAULT_MAX_LOAN_BAL, 0.5)
+        max_dtc = st.slider("상환소요일수 상한 (일)", 0.0, 60.0, config.DEFAULT_MAX_DTC, 0.5)
+        c11 = st.checkbox("⑪ 공매도 잔고비중 ≤ 상한", value=False)
+        c12 = st.checkbox("⑫ 공매도 거래비중 ≤ 상한", value=False)
+        c13 = st.checkbox("⑬ 대차잔고비율 ≤ 상한", value=False)
+        c14 = st.checkbox("⑭ 상환소요일수 ≤ 상한", value=False)
+        st.divider()
         markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
         min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
         show_all = st.checkbox("기준 일부만 충족도 표시(통과 개수순)", value=False)
-        st.form_submit_button("적용", type="primary", use_container_width=True, key="kr_apply")
+        st.form_submit_button("적용", type="primary", width="stretch", key="kr_apply")
 
 df = metrics.compute(fund, universe, min_roe=min_roe, max_por=max_por,
                      max_per=max_per, max_pbr=max_pbr,
                      min_gm=min_gm, min_om=min_om, min_nm=min_nm)
 df = _merge_rs(df, "code", "kr")
+df = _merge_short(df)
 df = df[df["market"].isin(markets)]
 if min_cap > 0:
     df = df[df["marcap"] >= min_cap * 1e8]
@@ -392,10 +838,17 @@ if min_cap > 0:
 # ⑩ 바닥반등 RS: 소외(RS ≤ 상한) + 최근 3개월 개선(Δ ≥ 개선폭)
 df["c10_rs"] = df["rs"].notna() & (df["rs"] <= rs_neglect) & (df["rs_delta"] >= rs_improve)
 
+# ⑪~⑭ 공매도·대차 수급: 상한 이하면 통과. 데이터 없으면(NaN→0) 자동 통과.
+df["c11_sbal"] = df["short_bal_ratio"].fillna(0) <= max_short_bal
+df["c12_svol"] = df["short_vol_ratio"].fillna(0) <= max_short_vol
+df["c13_loan"] = df["loan_bal_ratio"].fillna(0) <= max_loan_bal
+df["c14_dtc"] = df["days_to_cover"].fillna(0) <= max_dtc
+
 # 선택된 기준만 AND 결합
 flags = {"c1_uptrend": c1, "c2_q1_yoy": c2, "c3_roe": c3, "c4_por": c4,
          "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9,
-         "c10_rs": c10}
+         "c10_rs": c10, "c11_sbal": c11, "c12_svol": c12, "c13_loan": c13,
+         "c14_dtc": c14}
 active = [k for k, v in flags.items() if v]
 if active:
     mask = pd.Series(True, index=df.index)
@@ -468,6 +921,9 @@ if show_rs_detail:
     data["3M%"] = view["ret_3m"]
     data["6M%"] = view["ret_6m"]
     data["12M%"] = view["ret_12m"]
+if _has_short:   # 공매도 데이터 있을 때만 컬럼 표시(없으면 None 안 뜨게)
+    data["공매도잔고%"] = view["short_bal_ratio"]
+    data["상환일수"] = view["days_to_cover"]
 data["PER 연간"] = view["per_annual"]
 data["PER(1Qx4)"] = view["per_q1x4"]
 data["PBR"] = pbr_col
@@ -501,6 +957,14 @@ colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help=
 colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
 for _c in ("3M%", "6M%", "12M%"):
     colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
+colcfg["공매도잔고%"] = st.column_config.NumberColumn(
+    "공매도잔고%", format="%,.2f",
+    help="공매도 잔고비중 = 공매도 잔고수량 ÷ 상장주식수. 높을수록 숏 포지션이 두텁다. "
+         "(0.5% 이상은 KRX 의무공시 대상) · KRX CSV → data/krx_csv → import_short_csv.bat")
+colcfg["상환일수"] = st.column_config.NumberColumn(
+    "상환일수", format="%,.1f",
+    help="상환소요일수(Days to Cover) = 공매도 잔고수량 ÷ 최근 20일 평균거래량. "
+         "클수록 청산에 오래 걸려 숏스퀴즈 잠재력이 크다.")
 # 가로 스크롤해도 보이도록 왼쪽 식별 열(시장·종목코드·1년 주가·종목명) 고정
 colcfg["시장"] = st.column_config.TextColumn(pinned=True)
 colcfg["종목코드"] = st.column_config.TextColumn(pinned=True)
@@ -509,7 +973,7 @@ colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="s
 st.dataframe(
     disp,
     column_config=colcfg,
-    use_container_width=True,
+    width="stretch",
     height=560,
     hide_index=True,
 )
@@ -529,6 +993,14 @@ with st.expander("기준 정의 / 주의사항"):
 - **기준③** {config.YEARS[0]}·{config.YEARS[1]}·{config.YEARS[2]} ROE 모두 ≥ 하한 (ROE = 당기순이익 ÷ 자본총계, 기말)
 - **기준④** `시총 ÷ FY{config.ANNUAL_YEAR} 영업이익` **또는** `시총 ÷ (1분기 영업이익×4)` 중 하나라도 ≤ 상한
 - **기준⑤** PER도 동일 — `시총 ÷ FY{config.ANNUAL_YEAR} 순이익` **또는** `시총 ÷ (1분기 순이익×4)` 중 하나라도 ≤ 상한
+- **기준⑪~⑭** 공매도·대차 수급(KRX). 각 지표가 **상한 이하**면 통과 — 공매도/대차가 과도한 종목을 거른다.
+  - ⑪ 공매도 잔고비중 = 공매도 잔고수량 ÷ 상장주식수
+  - ⑫ 공매도 거래비중 = 당일 공매도 거래량 ÷ 전체 거래량
+  - ⑬ 대차잔고비율 = 대차잔고수량 ÷ 상장주식수 (빌려서 안 갚은 잔고 — 공매도 **선행/상한**)
+  - ⑭ 상환소요일수 = 공매도 잔고수량 ÷ 최근 20일 평균거래량 (숏 청산 압력·스퀴즈 잠재력)
+  - 표에는 **공매도잔고%·상환일수**만 표시. 데이터(`data/short_kr.parquet`)가 없으면 모두 자동 통과.
+  - **데이터 입력**: KRX는 자동수집을 봇차단(Akamai)으로 막으므로, KRX 정보데이터시스템에서 직접 받은 CSV를
+    `data/krx_csv/`에 넣고 `import_short_csv.bat`을 실행합니다(폴더 README 참고). 상환일수는 당일 총거래량 기준 근사치.
 - POR은 일반 PER(순이익 기준)이 아니라 **영업이익 기준** 입니다(사용자 정의).
 - 연결(CFS) 우선, 없으면 별도(OFS). 적자/결손 기업은 ROE·POR이 NaN 처리되어 자동 제외됩니다.
 - 시총은 실시간(FinanceDataReader), 재무는 캐시. 재무 갱신은 `python -m screener.fetch`.

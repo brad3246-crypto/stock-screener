@@ -79,10 +79,11 @@ def compute(
     df["op_q1_yoy"] = (q_cur / q_prev.abs() - 1) * 100
     df["c2_q1_yoy"] = q_cur.notna() & q_prev.notna() & (q_cur > q_prev)
 
-    # ── 기준 3: 최근 3년 ROE >= min_roe ─────────────────────────────────
+    # ── 기준 3: 최근연도 ROE >= min_roe (턴어라운드/이제 막 좋아진 종목 포착) ──
     roe_cols = [f"roe_{yr}" for yr in config.YEARS]
-    df["roe_min3y"] = df[roe_cols].min(axis=1)
-    df["c3_roe"] = df[roe_cols].notna().all(axis=1) & (df[roe_cols] >= min_roe).all(axis=1)
+    df["roe_min3y"] = df[roe_cols].min(axis=1)      # 참고 지표(표시용)로 유지
+    roe_latest = f"roe_{config.YEARS[-1]}"          # 2025
+    df["c3_roe"] = df[roe_latest].notna() & (df[roe_latest] >= min_roe)
 
     # ── 기준 4: POR <= max_por (연간 또는 1Qx4 중 하나라도) ───────────────
     df["c4_por"] = df["por"].notna() & (df["por"] <= max_por)
