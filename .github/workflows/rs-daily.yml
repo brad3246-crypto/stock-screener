@@ -1,0 +1,46 @@
+name: Daily RS / Bollinger refresh
+
+# 평일 22:30 UTC (= 다음날 07:30 KST): 한국 전일 종가 + 미국 당일 종가 반영.
+# RS·MDD·볼린저 밴드를 다시 계산해 data/rs_*.parquet 을 커밋 → 사이트 자동 재배포.
+# 수집 실패로 RS 유효 비율이 80% 미만이면 해당 파일은 덮어쓰지 않는다(screener.rs --min-valid).
+on:
+  schedule:
+    - cron: "30 22 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 갱신된 parquet 커밋용
+
+concurrency:
+  group: data-refresh
+  cancel-in-progress: false
+
+jobs:
+  rs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install deps
+        run: pip install -r requirements-fetch.txt
+
+      - name: Compute RS · MDD · Bollinger
+        run: python -m screener.rs --min-valid 0.8
+
+      - name: Commit updated cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/rs_kr.parquet data/rs_global.parquet
+          if git diff --staged --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "chore: RS·볼린저 데이터 자동 갱신 ($(date -u +%Y-%m-%d))"
+            git pull --rebase origin main
+            git push
+          fi

@@ -34,6 +34,10 @@ DEFAULT_MAX_PBR = 2.0       # PBR 상한
 DEFAULT_RS_NEGLECT_MAX = 70   # '수급 소외' 판단 RS 상한(이하)
 DEFAULT_RS_IMPROVE_MIN = 10   # 최근 3개월 RS 개선폭 하한(이상, 백분위 포인트)
 
+# ── 볼린저 밴드(20일, ±2σ) 기본값 ─────────────────────────────────────────
+DEFAULT_BB_PCTB_MAX = 0.2     # '하단 근접' %B 상한(이하)
+DEFAULT_BB_SQUEEZE_MAX = 10   # '스퀴즈' 밴드폭 순위 상한(최근 6개월 중 하위 %)
+
 # ── 경로 ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
