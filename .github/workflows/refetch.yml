@@ -23,10 +23,9 @@ jobs:
       - name: Install deps
         run: pip install -r requirements-fetch.txt
 
-      - name: Fetch DART financials (한국)
-        env:
-          DART_API_KEY: ${{ secrets.DART_API_KEY }}
-        run: python -m screener.fetch --force
+      # 한국 DART 수집은 여기서 하지 않는다: GitHub 서버에서는 수집이 실패해
+      # fundamentals.parquet를 빈 값으로 덮어썼음(2026-08-25, 채움률 1%).
+      # 한국 데이터는 사용자 PC 예약작업(refresh_data.bat → screener.publish)이 검증 후 푸시.
 
       - name: Fetch US/JP financials (yfinance)
         run: python -m screener.global_fetch
@@ -35,10 +34,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/fundamentals.parquet data/universe.parquet data/global_fundamentals.parquet
+          git add data/global_fundamentals.parquet
           if git diff --staged --quiet; then
             echo "변경 없음"
           else
-            git commit -m "chore: 분기 재무 데이터 자동 갱신 ($(date -u +%Y-%m-%d))"
+            git commit -m "chore: 미국·일본 재무 데이터 자동 갱신 ($(date -u +%Y-%m-%d))"
             git push
           fi
