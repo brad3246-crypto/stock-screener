@@ -14,12 +14,30 @@ import FinanceDataReader as fdr
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 
 from screener import config, metrics
 from screener.universe import load_universe
 
 st.set_page_config(page_title="ADR 바닥 수급 소외 종목 필터", layout="wide")
+
+# Streamlit 페이지는 <html lang="en">이라 크롬이 한글 화면을 '영어'로 보고 자동 번역해
+# "자동 수집 시도"→"공격", "주가"→"아기"처럼 깨짐 → 한국어로 표시하고 번역 차단.
+components.html(
+    """<script>
+    const d = window.parent.document;
+    d.documentElement.lang = "ko";
+    d.documentElement.setAttribute("translate", "no");
+    d.documentElement.classList.add("notranslate");
+    if (!d.querySelector('meta[name="google"]')) {
+        const m = d.createElement("meta");
+        m.name = "google"; m.content = "notranslate";
+        d.head.appendChild(m);
+    }
+    </script>""",
+    height=0,
+)
 
 MARKET_KR = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
 GMARKET_KR = {"US": "미국", "JP": "일본"}
@@ -834,7 +852,7 @@ with st.sidebar:
         st.subheader("적용할 기준")
         c1 = st.checkbox("① 최근 2년 영업이익 우상향", value=True)
         c2 = st.checkbox(f"② {config.QUARTER_YEAR} 1분기 영업이익 YoY 증가", value=True)
-        c3 = st.checkbox("③ 최근 3년 ROE ≥ 하한", value=True)
+        c3 = st.checkbox(f"③ 최근연도({config.YEARS[-1]}) ROE ≥ 하한", value=True)
         c4 = st.checkbox("④ POR ≤ 상한", value=True)
         c5 = st.checkbox("⑤ PER ≤ 상한", value=True)
         c6 = st.checkbox("⑥ PBR ≤ 상한", value=True)
@@ -1039,7 +1057,7 @@ with st.expander("기준 정의 / 주의사항"):
         f"""
 - **기준①** 영업이익 {config.YEARS[0]} < {config.YEARS[1]} < {config.YEARS[2]} (2년 연속 증가)
 - **기준②** {config.QUARTER_YEAR} 1분기 영업이익 > {config.QUARTER_YEAR-1} 1분기 영업이익
-- **기준③** {config.YEARS[0]}·{config.YEARS[1]}·{config.YEARS[2]} ROE 모두 ≥ 하한 (ROE = 당기순이익 ÷ 자본총계, 기말)
+- **기준③** 최근연도({config.YEARS[-1]}) ROE ≥ 하한 (ROE = 당기순이익 ÷ 자본총계, 기말). 이제 막 좋아진 턴어라운드 종목도 잡기 위해 3년 전부가 아닌 최근연도만 봄
 - **기준④** `시총 ÷ FY{config.ANNUAL_YEAR} 영업이익` **또는** `시총 ÷ (1분기 영업이익×4)` 중 하나라도 ≤ 상한
 - **기준⑤** PER도 동일 — `시총 ÷ FY{config.ANNUAL_YEAR} 순이익` **또는** `시총 ÷ (1분기 순이익×4)` 중 하나라도 ≤ 상한
 - **기준⑪~⑭** 공매도·대차 수급(KRX). 각 지표가 **상한 이하**면 통과 — 공매도/대차가 과도한 종목을 거른다.
