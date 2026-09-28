@@ -28,6 +28,10 @@ _LB = [63, 126, 189, 252]      # 3·6·9·12개월(거래일)
 _W = [2.0, 1.0, 1.0, 1.0]
 _NEED = 252                    # 점수 1개에 필요한 최소 거래일
 
+# 볼린저 밴드: 20일 이동평균 ± 2σ, 밴드폭 순위는 최근 6개월(126거래일) 내 비교
+_BB_N, _BB_K = 20, 2.0
+_BB_LB = 126
+
 
 def _score(closes: np.ndarray, off: int = 0):
     """off 거래일 전 시점 기준 IBD 가중 모멘텀 점수. 데이터 부족 시 None."""
@@ -64,13 +68,39 @@ def _mdd(closes: np.ndarray, window: int = 252):
     return float(dd.min() * 100)
 
 
+def _bollinger(closes: np.ndarray, n: int = _BB_N, k: float = _BB_K, lb: int = _BB_LB):
+    """볼린저 밴드 → (%B, 밴드폭%, 밴드폭 순위%). 데이터 부족 시 None.
+
+    %B      = (종가 - 하단) / (상단 - 하단). 0 이하 하단 이탈, 1 이상 상단 돌파.
+    밴드폭  = (상단 - 하단) / 중심선 × 100.
+    폭 순위 = 최근 lb거래일 밴드폭 중 현재 이하 비율(0~100). 낮을수록 수축(스퀴즈).
+    """
+    if len(closes) < n:
+        return None, None, None
+    s = pd.Series(closes)
+    mid = s.rolling(n).mean()
+    sd = s.rolling(n).std(ddof=0)
+    upper, lower = mid + k * sd, mid - k * sd
+    span = float(upper.iloc[-1] - lower.iloc[-1])
+    pctb = float((closes[-1] - lower.iloc[-1]) / span) if span > 0 else None
+    bw = ((upper - lower) / mid * 100).where(mid > 0)
+    width = float(bw.iloc[-1]) if bw.iloc[-1] == bw.iloc[-1] else None
+    hist = bw.dropna().iloc[-lb:]
+    rank = None
+    if width is not None and len(hist) >= lb:
+        rank = float((hist <= width).mean() * 100)
+    return pctb, width, rank
+
+
 def _rec(key: str, market: str, closes) -> dict:
     arr = np.asarray([c for c in (closes if closes is not None else []) if c == c],
                      dtype=float)
     r3, r6, r12 = _returns(arr)
+    pctb, width, width_rank = _bollinger(arr)
     return {"key": key, "market": market,
             "score": _score(arr, 0), "score_3m": _score(arr, 63),
             "mdd": _mdd(arr),
+            "bb_pctb": pctb, "bb_width": width, "bb_width_rank": width_rank,
             "ret_3m": r3, "ret_6m": r6, "ret_12m": r12}
 
 
@@ -130,7 +160,7 @@ def compute_kr(limit: int | None = None, workers: int = 8) -> pd.DataFrame:
             recs.append(r)
     df = _finalize(pd.DataFrame(recs)).rename(columns={"key": "code"})
     return df[["code", "market", "rs", "rs_3m", "rs_delta", "mdd",
-               "ret_3m", "ret_6m", "ret_12m"]]
+               "ret_3m", "ret_6m", "ret_12m", "bb_pctb", "bb_width", "bb_width_rank"]]
 
 
 # ── 미국·일본 (yfinance 배치 다운로드) ────────────────────────────────────
@@ -172,23 +202,29 @@ def compute_global(limit: int | None = None, chunk: int = 25, pause: float = 1.5
     recs = [_rec(t, markets[t], closes.get(t)) for t in tickers]
     df = _finalize(pd.DataFrame(recs)).rename(columns={"key": "ticker"})
     return df[["ticker", "market", "rs", "rs_3m", "rs_delta", "mdd",
-               "ret_3m", "ret_6m", "ret_12m"]]
+               "ret_3m", "ret_6m", "ret_12m", "bb_pctb", "bb_width", "bb_width_rank"]]
+
+
+def _save(df: pd.DataFrame, path, tag: str, min_valid: float) -> bool:
+    """RS 유효 비율이 min_valid 이상일 때만 저장(수집 실패로 캐시를 덮어쓰는 사고 방지)."""
+    n_ok = int(df["rs"].notna().sum())
+    ratio = n_ok / len(df) if len(df) else 0.0
+    if ratio < min_valid:
+        print(f"[{tag}] 저장 안 함: RS유효 {n_ok}/{len(df)} ({ratio:.0%}) < 기준 {min_valid:.0%}")
+        return False
+    df.to_parquet(path, index=False)
+    print(f"[{tag}] 저장 {len(df)}종목 · RS유효 {n_ok} ({ratio:.0%}) → {path.name}")
+    return True
 
 
 def run(do_kr: bool = True, do_global: bool = True,
-        limit: int | None = None, workers: int = 8) -> None:
+        limit: int | None = None, workers: int = 8, min_valid: float = 0.0) -> None:
     config.DATA_DIR.mkdir(exist_ok=True)
     t0 = time.time()
     if do_kr:
-        df = compute_kr(limit=limit, workers=workers)
-        df.to_parquet(config.RS_KR_PARQUET, index=False)
-        print(f"[KR] 저장 {len(df)}종목 · RS유효 {int(df['rs'].notna().sum())} "
-              f"→ {config.RS_KR_PARQUET.name}")
+        _save(compute_kr(limit=limit, workers=workers), config.RS_KR_PARQUET, "KR", min_valid)
     if do_global:
-        dg = compute_global(limit=limit)
-        dg.to_parquet(config.RS_GLOBAL_PARQUET, index=False)
-        print(f"[GLOBAL] 저장 {len(dg)}종목 · RS유효 {int(dg['rs'].notna().sum())} "
-              f"→ {config.RS_GLOBAL_PARQUET.name}")
+        _save(compute_global(limit=limit), config.RS_GLOBAL_PARQUET, "GLOBAL", min_valid)
     print(f"완료 / {time.time() - t0:.0f}s")
 
 
@@ -198,6 +234,8 @@ if __name__ == "__main__":
     p.add_argument("--global-only", action="store_true")
     p.add_argument("--limit", type=int, default=None, help="시장별 앞 N종목(테스트)")
     p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--min-valid", type=float, default=0.0,
+                   help="RS 유효 비율이 이 값(0~1) 미만이면 캐시를 덮어쓰지 않음")
     a = p.parse_args()
     run(do_kr=not a.global_only, do_global=not a.kr_only,
-        limit=a.limit, workers=a.workers)
+        limit=a.limit, workers=a.workers, min_valid=a.min_valid)

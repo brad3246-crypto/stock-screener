@@ -140,7 +140,8 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 # ── RS(상대강도) 캐시 ────────────────────────────────────────────────────
-RS_COLS = ["rs", "rs_3m", "rs_delta", "mdd", "ret_3m", "ret_6m", "ret_12m"]
+RS_COLS = ["rs", "rs_3m", "rs_delta", "mdd", "ret_3m", "ret_6m", "ret_12m",
+           "bb_pctb", "bb_width", "bb_width_rank"]
 
 
 @st.cache_data(ttl=900)
@@ -185,6 +186,30 @@ def _merge_short(df: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = float("nan")
     return df
+
+
+BB_CAPTION = ("볼린저 밴드(20일, ±2σ): %B 0=하단·1=상단 · 폭순위 낮을수록 수축. "
+              "소형·저유동성 종목은 신호가 왜곡되기 쉬워 최소 시총과 함께 쓰길 권장")
+
+
+def _bb_flags(df: pd.DataFrame, pctb_max: float, squeeze_max: int) -> pd.DataFrame:
+    """⑮ 볼린저 하단 근접(%B ≤ 상한) · ⑯ 스퀴즈(밴드폭 순위 ≤ 상한)."""
+    df["c15_bb_low"] = df["bb_pctb"].notna() & (df["bb_pctb"] <= pctb_max)
+    df["c16_bb_squeeze"] = df["bb_width_rank"].notna() & (df["bb_width_rank"] <= squeeze_max)
+    return df
+
+
+def _bb_colcfg(colcfg: dict) -> None:
+    colcfg["%B"] = st.column_config.NumberColumn(
+        "%B", format="%.2f",
+        help="볼린저 밴드(20일, ±2σ) 안에서 종가 위치. 0=하단, 0.5=중심선, 1=상단. "
+             "0 미만은 하단 이탈, 1 초과는 상단 돌파.")
+    colcfg["BB폭순위"] = st.column_config.NumberColumn(
+        "BB폭순위", format="%d",
+        help="현재 밴드폭이 최근 6개월 중 어느 수준인지(0~100). 낮을수록 수축(스퀴즈) — "
+             "변동성이 줄어든 상태로, 큰 움직임이 뒤따르는 경우가 많지만 방향은 알 수 없음.")
+    colcfg["BB폭%"] = st.column_config.NumberColumn(
+        "BB폭%", format="%,.1f", help="밴드폭 = (상단 − 하단) ÷ 중심선 × 100")
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -237,6 +262,12 @@ def render_global() -> None:
         rs_improve = st.slider("최근 3개월 RS 개선폭 (이상)", 0, 50, config.DEFAULT_RS_IMPROVE_MIN, 1, key="g_rsi")
         c10 = st.checkbox("⑩ 바닥반등 RS (소외 + 개선)", value=False, key="g_c10")
         st.divider()
+        st.caption(BB_CAPTION)
+        bb_pctb = st.slider("%B 상한 (하단 근접)", -0.5, 1.0, config.DEFAULT_BB_PCTB_MAX, 0.05, key="g_bbp")
+        bb_sq = st.slider("밴드폭 순위 상한 (스퀴즈)", 0, 50, config.DEFAULT_BB_SQUEEZE_MAX, 1, key="g_bbs")
+        c15 = st.checkbox("⑮ 볼린저 하단 근접 (%B ≤ 상한)", value=False, key="g_c15")
+        c16 = st.checkbox("⑯ 볼린저 스퀴즈 (밴드폭 순위 ≤ 상한)", value=False, key="g_c16")
+        st.divider()
         mkts = st.multiselect("시장", ["US", "JP"], default=["US", "JP"],
                               format_func=lambda m: GMARKET_KR[m], key="g_mkt")
         min_cap = st.number_input("최소 시총 (억원)", 0, 100_000_000, 0, step=1000, key="g_cap")
@@ -258,9 +289,10 @@ def render_global() -> None:
     df["c8_om"] = df["op_margin"].notna() & (df["op_margin"] >= min_om)
     df["c9_nm"] = df["net_margin"].notna() & (df["net_margin"] >= min_nm)
     df["c10_rs"] = df["rs"].notna() & (df["rs"] <= rs_neglect) & (df["rs_delta"] >= rs_improve)
+    df = _bb_flags(df, bb_pctb, bb_sq)
     flags = {"c1_uptrend": c1, "c2_qyoy": c2, "c3_roe": c3, "c4_por": c4,
              "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9,
-             "c10_rs": c10}
+             "c10_rs": c10, "c15_bb_low": c15, "c16_bb_squeeze": c16}
     active = [k for k, v in flags.items() if v]
     mask = pd.Series(True, index=df.index)
     for k in active:
@@ -301,11 +333,14 @@ def render_global() -> None:
         data["ROE(최근)"] = view["roe_y2"]
     data["RS"] = view["rs"]
     data["MDD"] = view["mdd"]
+    data["%B"] = view["bb_pctb"]
+    data["BB폭순위"] = view["bb_width_rank"]
     if show_rs_detail:
         data["RS Δ3m"] = view["rs_delta"]
         data["3M%"] = view["ret_3m"]
         data["6M%"] = view["ret_6m"]
         data["12M%"] = view["ret_12m"]
+        data["BB폭%"] = view["bb_width"]
     data["PER"] = view["per"]
     data["PBR"] = view["pbr"]
     data["GPM"] = view["gross_margin"]
@@ -336,6 +371,7 @@ def render_global() -> None:
     colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
     for _c in ("3M%", "6M%", "12M%"):
         colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
+    _bb_colcfg(colcfg)
     colcfg["1년 주가"] = st.column_config.LineChartColumn("1년 주가", width="small")
     st.dataframe(disp, column_config=colcfg, width="stretch", height=560, hide_index=True)
 
@@ -821,6 +857,12 @@ with st.sidebar:
         c13 = st.checkbox("⑬ 대차잔고비율 ≤ 상한", value=False)
         c14 = st.checkbox("⑭ 상환소요일수 ≤ 상한", value=False)
         st.divider()
+        st.caption(BB_CAPTION)
+        bb_pctb = st.slider("%B 상한 (하단 근접)", -0.5, 1.0, config.DEFAULT_BB_PCTB_MAX, 0.05)
+        bb_sq = st.slider("밴드폭 순위 상한 (스퀴즈)", 0, 50, config.DEFAULT_BB_SQUEEZE_MAX, 1)
+        c15 = st.checkbox("⑮ 볼린저 하단 근접 (%B ≤ 상한)", value=False)
+        c16 = st.checkbox("⑯ 볼린저 스퀴즈 (밴드폭 순위 ≤ 상한)", value=False)
+        st.divider()
         markets = st.multiselect("시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
         min_cap = st.number_input("최소 시총 (억원)", 0, 1_000_000, 0, step=100)
         show_all = st.checkbox("기준 일부만 충족도 표시(통과 개수순)", value=False)
@@ -844,11 +886,14 @@ df["c12_svol"] = df["short_vol_ratio"].fillna(0) <= max_short_vol
 df["c13_loan"] = df["loan_bal_ratio"].fillna(0) <= max_loan_bal
 df["c14_dtc"] = df["days_to_cover"].fillna(0) <= max_dtc
 
+# ⑮ 볼린저 하단 근접 · ⑯ 스퀴즈 (데이터 없으면 불통과)
+df = _bb_flags(df, bb_pctb, bb_sq)
+
 # 선택된 기준만 AND 결합
 flags = {"c1_uptrend": c1, "c2_q1_yoy": c2, "c3_roe": c3, "c4_por": c4,
          "c5_per": c5, "c6_pbr": c6, "c7_gm": c7, "c8_om": c8, "c9_nm": c9,
          "c10_rs": c10, "c11_sbal": c11, "c12_svol": c12, "c13_loan": c13,
-         "c14_dtc": c14}
+         "c14_dtc": c14, "c15_bb_low": c15, "c16_bb_squeeze": c16}
 active = [k for k, v in flags.items() if v]
 if active:
     mask = pd.Series(True, index=df.index)
@@ -916,11 +961,14 @@ if show_roe_yearly:
     data[f"{yy[2]} ROE"] = view["roe_2025"]
 data["RS"] = view["rs"]
 data["MDD"] = view["mdd"]
+data["%B"] = view["bb_pctb"]
+data["BB폭순위"] = view["bb_width_rank"]
 if show_rs_detail:
     data["RS Δ3m"] = view["rs_delta"]
     data["3M%"] = view["ret_3m"]
     data["6M%"] = view["ret_6m"]
     data["12M%"] = view["ret_12m"]
+    data["BB폭%"] = view["bb_width"]
 if _has_short:   # 공매도 데이터 있을 때만 컬럼 표시(없으면 None 안 뜨게)
     data["공매도잔고%"] = view["short_bal_ratio"]
     data["상환일수"] = view["days_to_cover"]
@@ -957,6 +1005,7 @@ colcfg["RS Δ3m"] = st.column_config.NumberColumn("RS Δ3m", format="%+d", help=
 colcfg["MDD"] = st.column_config.NumberColumn("MDD", format="%,.1f", help="최근 12개월 최대낙폭(%)")
 for _c in ("3M%", "6M%", "12M%"):
     colcfg[_c] = st.column_config.NumberColumn(format="%,.1f")
+_bb_colcfg(colcfg)
 colcfg["공매도잔고%"] = st.column_config.NumberColumn(
     "공매도잔고%", format="%,.2f",
     help="공매도 잔고비중 = 공매도 잔고수량 ÷ 상장주식수. 높을수록 숏 포지션이 두텁다. "
@@ -1001,6 +1050,10 @@ with st.expander("기준 정의 / 주의사항"):
   - 표에는 **공매도잔고%·상환일수**만 표시. 데이터(`data/short_kr.parquet`)가 없으면 모두 자동 통과.
   - **데이터 입력**: KRX는 자동수집을 봇차단(Akamai)으로 막으므로, KRX 정보데이터시스템에서 직접 받은 CSV를
     `data/krx_csv/`에 넣고 `import_short_csv.bat`을 실행합니다(폴더 README 참고). 상환일수는 당일 총거래량 기준 근사치.
+- **기준⑮·⑯** 볼린저 밴드(20일 이동평균 ± 2σ, 전 거래일 종가 기준). 실적 필터로 고른 종목의 **진입 시점** 참고용.
+  - ⑮ 하단 근접: %B = (종가 − 하단) ÷ (상단 − 하단) ≤ 상한. 0 미만은 하단 이탈. 하락 추세에서는 하단을 타고 계속 내려갈 수 있음.
+  - ⑯ 스퀴즈: 밴드폭 (상단 − 하단) ÷ 중심선이 최근 6개월 중 하위 N% 이내. 변동성 수축 → 큰 움직임 가능성, **방향은 알려주지 않음**.
+  - 소형·저유동성 종목은 신호가 흔들리기 쉬우므로 최소 시총과 함께 쓰길 권장.
 - POR은 일반 PER(순이익 기준)이 아니라 **영업이익 기준** 입니다(사용자 정의).
 - 연결(CFS) 우선, 없으면 별도(OFS). 적자/결손 기업은 ROE·POR이 NaN 처리되어 자동 제외됩니다.
 - 시총은 실시간(FinanceDataReader), 재무는 캐시. 재무 갱신은 `python -m screener.fetch`.
